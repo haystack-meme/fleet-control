@@ -45,7 +45,8 @@ click Start, and it runs there as a proper systemd service. You don't log in to 
   models or anything else every machine needs to `curl`. The browsable index has folders, sizes, dates, sorting and
   download links.
 - **Backup and restore from the browser.** Download the whole database as one file and upload it to restore.
-- **Scriptable, and built for it.** Everything on the page is also a JSON API with an API key. Give a service a
+- **Scriptable, and built for it.** Everything on the page is also a JSON API with an API key
+  ([guide with examples](docs/API.md)). Give a service a
   health URL and `start?wait=1` answers only once it actually works, so switching a GPU from one model to another
   is one request. Actions are safe to repeat, and errors come with stable codes.
 
@@ -186,6 +187,10 @@ two files and restart (then re-install the agents; see below).
 
 ### API
 
+**Writing a program or script against the API? Read [docs/API.md](docs/API.md)**: a complete guide with tested
+Node.js examples (a small client, waiting for services, switching a GPU, retries, logs, rollback, backup) and
+`curl` one-liners. The reference below is the short version.
+
 All endpoints except `/health`, `/login`, `/enroll` and `/install/*` need a signed-in session (cookie from `POST /login`)
 or the API key, sent as `Authorization: Bearer <key>` or `X-API-Key: <key>`. There is always exactly one key: a
 random one is made the first time the server starts. See it, copy it or reroll it with **API key** on the page.
@@ -270,6 +275,8 @@ GitHub Actions runs `npm test` on every push and pull request (`.github/workflow
   health checks and waiting, crashes while starting, stop timeouts, switching back and forth between two services
   with `Conflicts=`, a machine rebooting, the server restarting, backup and restore, and certificate pinning. Afterwards it removes every
   container (`KEEP=1` leaves them running).
+- `sudo npm run test:docs` (needs Docker and `jq`): runs every example in [docs/API.md](docs/API.md) against a
+  fresh fleet in Docker and checks what each one did, so the guide stays correct.
 
 ## Future work
 

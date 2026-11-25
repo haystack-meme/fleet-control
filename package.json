@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test --test-concurrency=1 test/*.test.js",
-    "test:live": "test/live/run.sh"
+    "test:live": "test/live/run.sh",
+    "test:docs": "test/live/docs.sh"
   },
   "engines": {
     "node": ">=26.0.0"

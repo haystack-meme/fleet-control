@@ -2,7 +2,10 @@
 # Live test on a Docker host: a fleet-server container installed with install.sh, three machine containers enrolled
 # with the real fleet-agent --install, then test/live/live.test.js drives the API and checks inside the containers.
 #   sudo test/live/run.sh          (KEEP=1 leaves the containers running afterwards)
+#   sudo SETUP_ONLY=1 test/live/run.sh   only sets up the server and machines (approved: no) and leaves them running,
+#                                        e.g. to try the API by hand; remove them with a normal run or docker rm -f
 set -euo pipefail
+[[ "${SETUP_ONLY:-}" == 1 ]] && KEEP=1
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 NODE_VERSION="$(node -p process.versions.node)"
 IMG=fleet-live-test NET=fleet-live-test MACHINES=(m1 m2 m3)
@@ -33,5 +36,10 @@ for m in "${MACHINES[@]}"; do
   docker exec "fleet-live-$m" bash -c "curl -sk https://$SERVER_IP/install/fleet-agent.js -o /tmp/fleet-agent.js && node /tmp/fleet-agent.js --install --server $SERVER_IP" 2>&1 | grep -v '^Created symlink' | sed 's/^/   /'
 done
 
+if [[ "${SETUP_ONLY:-}" == 1 ]]; then
+  log "set up: server https://$SERVER_IP (no password yet: the first sign-in sets it), machines ${MACHINES[*]} (pending)"
+  log "certificate: docker exec fleet-live-server cat /opt/fleet-control/data/tls.crt"
+  exit 0
+fi
 log "running test/live/live.test.js"
 FLEET_LIVE_SERVER="https://$SERVER_IP" FLEET_LIVE_MACHINES="${MACHINES[*]}" node --test --test-concurrency=1 --test-reporter=spec test/live/live.test.js
