@@ -1,0 +1,24 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Fleet</title><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1b1f24;--line:#e3e6ea;--acc:#2f6fdb;--bad:#d64545}
+@media (prefers-color-scheme:dark){:root{--bg:#121417;--card:#1b1e23;--fg:#e8eaed;--line:#2b3038;--acc:#6b9cff;--bad:#ff6b6b}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+.wrap{max-width:360px;margin:12vh auto 0;padding:24px 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+button,input{font:inherit;border-radius:8px;border:1px solid var(--line);padding:9px 12px;background:var(--card);color:var(--fg)}
+button{background:var(--acc);border-color:var(--acc);color:#fff;cursor:pointer}
+.err{color:var(--bad)}
+</style></head><body>
+<div class="wrap"><div class="card">
+<h1 style="margin:0 0 12px;font-size:20px">Fleet</h1>
+<form id="f"><input id="pw" type="password" placeholder="Password" autocomplete="current-password" autofocus required style="width:100%">
+<button style="width:100%;margin-top:10px">Sign in</button><p id="e" class="err" style="margin:10px 0 0;min-height:1.4em"></p></form>
+</div></div>
+<script>
+document.getElementById('f').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const r = await fetch('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: document.getElementById('pw').value }) });
+  if (r.ok) location.href = '/';
+  else document.getElementById('e').textContent = (await r.json().catch(() => ({}))).error || 'Sign-in failed';
+};
+</script></body></html>

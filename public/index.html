@@ -1,0 +1,404 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fleet</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1b1f24;--mut:#667085;--line:#e3e6ea;--acc:#2f6fdb;--ok:#1f9d55;--warn:#c98a00;--bad:#d64545;--code:#f0f2f5;
+  --h-cmd:#0b57d0;--h-flag:#8a3ffc;--h-str:#1a7f37;--h-var:#b35900;--h-op:#cf222e;--h-kw:#cf222e;--h-com:#6e7781;--h-num:#0a7e8c;--h-path:#24292f}
+@media (prefers-color-scheme:dark){:root{--bg:#121417;--card:#1b1e23;--fg:#e8eaed;--mut:#98a1ad;--line:#2b3038;--acc:#6b9cff;--ok:#3cc47c;--warn:#e5b33d;--bad:#ff6b6b;--code:#14171b;
+  --h-cmd:#79b8ff;--h-flag:#d2a8ff;--h-str:#7ee787;--h-var:#ffa657;--h-op:#ff7b72;--h-kw:#ff7b72;--h-com:#8b949e;--h-num:#56d4dd;--h-path:#c9d1d9}}
+.h-cmd{color:var(--h-cmd);font-weight:600}.h-flag{color:var(--h-flag)}.h-str{color:var(--h-str)}.h-var{color:var(--h-var)}
+.h-op{color:var(--h-op);font-weight:600}.h-kw{color:var(--h-kw);font-weight:600}.h-com{color:var(--h-com);font-style:italic}.h-num{color:var(--h-num)}.h-path{color:var(--h-path)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+.wrap{max-width:880px;margin:0 auto;padding:28px 16px 64px}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:28px;flex-wrap:wrap}
+h1{margin:0;font-size:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px}
+button,input,select,textarea{font:inherit;border-radius:8px;border:1px solid var(--line);padding:7px 11px;background:var(--card);color:var(--fg)}
+button{cursor:pointer}button.pri{background:var(--acc);border-color:var(--acc);color:#fff}button.danger{color:var(--bad)}
+button:disabled{opacity:.5;cursor:default}
+.mut{color:var(--mut)}.err{color:var(--bad)}
+.machine{margin-bottom:36px;overflow:hidden}.mhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;padding:16px 22px;background:var(--code)}
+.mhead h2{margin:0;font-size:17px}.mhead .mside{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.mhead button{padding:3px 9px;font-size:13px}.newm{border-color:var(--warn)}.newm .mhead{background:color-mix(in srgb,var(--warn) 12%,var(--card))}.machine .empty{border-top:1px solid var(--line);padding:22px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;background:var(--mut);vertical-align:1px}
+.up{background:var(--ok)}.down,.failed{background:var(--bad)}.activating,.deactivating{background:var(--warn)}
+.svc{padding:22px;border-top:1px solid var(--line)}.svc .mut:not(.ver){margin-top:2px}
+.svc-top{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline}
+.acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+code,pre{font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+.cmd{display:block;margin-top:12px;padding:8px 10px 8px 26px;background:var(--code);border-radius:6px;white-space:pre-wrap;overflow-wrap:anywhere;
+  position:relative;cursor:pointer;border:1px solid transparent}
+.cmd:hover{border-color:var(--line)}.cmd:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.cmd::before{content:'';position:absolute;left:10px;top:13px;border:5px solid transparent;border-left-color:var(--mut);border-right-width:0;transition:transform .15s}
+.cmd.open::before{transform:rotate(90deg)}
+.cmd:not(.open){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Version history */
+.ver{font-size:12px;font-weight:600;color:var(--mut);border:1px solid var(--line);border-radius:6px;padding:0 5px;margin-left:6px;vertical-align:1px}
+.hist{margin-top:16px;border:1px solid var(--line);border-radius:6px}
+.hv{padding:12px 14px;border-top:1px solid var(--line)}.hv:first-child{border-top:0}
+.hv-top{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px}
+.hv code{display:block;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hv button{padding:3px 9px;font-size:13px}
+/* Machine gauges */
+.gauges{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:16px 22px 18px;border-top:1px solid var(--line)}
+@media (max-width:600px){.gauges{grid-template-columns:repeat(2,1fr)}}
+.gauge{display:flex;align-items:center;gap:10px;min-width:0}
+.gauge svg{flex:none}.gauge .bg{stroke:var(--line)}.gauge .ok{stroke:var(--ok)}.gauge .warn{stroke:var(--warn)}.gauge .hot{stroke:var(--bad)}
+.gauge text{fill:var(--fg);font:600 13px system-ui,sans-serif}
+.gauge .gl{font-size:13px;font-weight:600}.gauge .gs{font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+pre.logs{margin:16px 0 0;padding:10px;background:var(--code);border-radius:6px;max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-all}
+.empty{padding:18px 16px}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--fg);padding:0;width:min(820px,calc(100vw - 24px))}
+dialog::backdrop{background:#0008}
+form.f{padding:18px;display:grid;gap:12px}form.f label{display:grid;gap:4px;font-size:14px}
+form.f input,form.f select,form.f textarea{width:100%}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media (max-width:520px){.row2{grid-template-columns:1fr}}
+.fbtns{display:flex;justify-content:flex-end;gap:8px}
+/* Highlighted editor: a coloured <pre> behind a transparent textarea with identical text metrics. */
+.hlwrap{position:relative;background:var(--card);border:1px solid var(--line);border-radius:8px}
+.hlwrap:focus-within{outline:2px solid var(--acc);outline-offset:-1px}
+.hlwrap pre,.hlwrap textarea{margin:0;padding:8px 10px;border:0;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+  white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal;tab-size:4;letter-spacing:0}
+.hlwrap pre{position:absolute;inset:0;pointer-events:none;overflow:hidden;color:var(--fg)}
+form.f .hlwrap textarea{position:relative;display:block;width:100%;min-height:5.5em;background:transparent;color:transparent;
+  caret-color:var(--fg);resize:none;overflow:hidden;outline:none;border-radius:8px}
+.hlwrap textarea::selection{background:color-mix(in srgb,var(--acc) 30%,transparent);color:transparent}
+</style></head><body>
+<div class="wrap">
+<header><h1>Fleet</h1>
+<div><button id="new" class="pri">New service</button> <button id="ref">Refresh</button> <button id="out">Sign out</button></div></header>
+
+<div id="svcs"><div class="card empty mut">Loading…</div></div>
+</div>
+
+<dialog id="dlg"><form class="f" id="form" method="dialog">
+<h1 id="ftitle" style="font-size:18px">New service</h1>
+<div class="row2">
+<label>Name <input name="name" required pattern="[a-z0-9][a-z0-9\-]{0,39}" placeholder="my-job" autocomplete="off"></label>
+<label>Machine <select name="machine" required></select></label></div>
+<label>Description <input name="description" maxlength="200" autocomplete="off"></label>
+<label>Command <span class="mut">(run with bash -c)</span>
+<div class="hlwrap"><pre id="cmdhl" aria-hidden="true"></pre><textarea name="command" rows="3" required spellcheck="false" autocapitalize="off" autocomplete="off"></textarea></div></label>
+<div class="row2">
+<label>Working directory <input name="workdir" placeholder="/srv/app" autocomplete="off"></label>
+<label>Run as user <input name="run_as" placeholder="default user" autocomplete="off"></label></div>
+<div class="row2">
+<label>Restart <select name="restart"><option value="no">never</option><option value="on-failure">on failure</option><option value="always">always</option></select></label></div>
+<label>Environment <span class="mut">(one KEY=value per line)</span><textarea name="env" rows="3" spellcheck="false"></textarea></label>
+<label>Extra systemd properties <span class="mut">(one Key=Value per line, e.g. SupplementaryGroups=video render)</span><textarea name="properties" rows="3" spellcheck="false"></textarea></label>
+<p id="ferr" class="err" style="margin:0;min-height:1.2em"></p>
+<div class="fbtns"><button type="button" id="cancel">Cancel</button><button class="pri" id="save">Save</button></div>
+</form></dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = (s) => { const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return d ? d + 'd ' + h + 'h' : h ? h + 'h ' + m + 'm' : m + 'm'; };
+// Tiny bash highlighter: returns escaped HTML with <span class="h-…"> tokens. Display only; the command text is unchanged.
+const KW = new Set(['if','then','else','elif','fi','for','in','do','done','while','until','case','esac','function','select','time','exec','export','local','return','break','continue']);
+function hlBash(src) {
+  const out = []; let i = 0, cmdNext = true;
+  const push = (cls, t) => out.push(cls ? '<span class="h-' + cls + '">' + esc(t) + '</span>' : esc(t));
+  const varRe = /^\$(\{[^}]*\}|\(\(?[^)]*\)\)?|[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!-])/;
+  // Double-quoted string: green, with $vars inside highlighted.
+  const dq = (s) => { let j = 1, buf = '"';
+    const flush = () => { if (buf) push('str', buf); buf = ''; };
+    while (j < s.length) { const c = s[j];
+      if (c === '\\') { buf += s.slice(j, j + 2); j += 2; continue; }
+      if (c === '$') { const m = s.slice(j).match(varRe); if (m) { flush(); push('var', m[0]); j += m[0].length; continue; } }
+      buf += c; j++; if (c === '"') break; }
+    flush(); return j; };
+  while (i < src.length) {
+    const rest = src.slice(i), c = src[i];
+    let m;
+    if (c === '\n' || c === ' ' || c === '\t') { m = rest.match(/^\s+/)[0]; push('', m); i += m.length; if (m.includes('\n')) cmdNext = true; continue; }
+    if (c === '#' && (i === 0 || /\s/.test(src[i - 1]))) { m = rest.match(/^#[^\n]*/)[0]; push('com', m); i += m.length; continue; }
+    if (c === "'") { m = rest.match(/^'[^']*'?/)[0]; push('str', m); i += m.length; cmdNext = false; continue; }
+    if (c === '"') { i += dq(rest); cmdNext = false; continue; }
+    if (c === '\\' && rest[1] === '\n') { push('op', '\\'); i++; continue; }
+    if (!/^&>/.test(rest) && (m = rest.match(/^(\|\||&&|;;|\||;|&|\$\(|\(|\)|`)/))) { push('op', m[0]); i += m[0].length; cmdNext = true; continue; }
+    if ((m = rest.match(/^([0-9]*>&[0-9-]*|&>>?|[0-9]*>>?|<<?<?)/))) { push('op', m[0]); i += m[0].length; continue; }
+    if ((m = rest.match(varRe))) { push('var', m[0]); i += m[0].length; cmdNext = false; continue; }
+    m = rest.match(/^[^\s|&;()<>'"`$]+/); const w = m ? m[0] : c; i += w.length;
+    if (cmdNext && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) { const k = w.indexOf('='); push('var', w.slice(0, k)); push('op', '='); push('str', w.slice(k + 1)); continue; }
+    if (KW.has(w) && cmdNext) { push('kw', w); continue; }
+    if (cmdNext) { push('cmd', w); cmdNext = false; continue; }
+    if (/^--?[A-Za-z0-9]/.test(w)) { const k = w.indexOf('='); if (k > 0) { push('flag', w.slice(0, k)); push('op', '='); push('', w.slice(k + 1)); } else push('flag', w); continue; }
+    if (/^-?[0-9][0-9.,:]*$/.test(w)) { push('num', w); continue; }
+    if (w.includes('/')) { push('path', w); continue; }
+    push('', w);
+  }
+  return out.join('');
+}
+
+let services = [], machines = null, editing = null;
+const openLogs = new Set(), openHist = new Set();
+// Which command blocks are expanded: remembered in this browser only (collapsed by default).
+const openCmds = new Set((() => { try { return JSON.parse(localStorage.getItem('openCmds') || '[]'); } catch { return []; } })());
+const saveOpenCmds = () => { try { localStorage.setItem('openCmds', JSON.stringify([...openCmds])); } catch {} };
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: opts.body ? { 'Content-Type': 'application/json' } : {} });
+  if (r.status === 401) { location.href = '/login'; throw new Error('signed out'); }
+  const type = r.headers.get('content-type') || '';
+  const data = type.includes('json') ? await r.json() : await r.text();
+  if (!r.ok) throw Object.assign(new Error(data.error || data || r.statusText), { canForce: !!data.can_force });
+  return data;
+}
+
+// The 5-second refresh only redraws the machine headers + gauges, so open logs/history panels stay put.
+// Approved machines get full cards; new (pending) and rejected ones are listed under "New machines" until approved.
+const approved = () => (machines || []).filter((m) => m.status === 'approved');
+const newMachinesKey = () => JSON.stringify((machines || []).filter((m) => m.status !== 'approved').map((m) => [m.name, m.status, m.online, m.address]));
+let renderedNewKey = null;
+async function loadMachines() {
+  machines = await api('/api/machines');
+  const heads = document.querySelectorAll('[data-hhead]'), ok = approved();
+  if (newMachinesKey() === renderedNewKey && heads.length === ok.length && ok.every((h, i) => heads[i].dataset.hhead === h.name))
+    ok.forEach((h, i) => { heads[i].innerHTML = headHtml(h.name); });
+  else render();
+}
+function newMachinesHtml() {
+  const list = (machines || []).filter((m) => m.status !== 'approved');
+  if (!list.length) return '';
+  return '<section class="card machine newm"><div class="mhead"><h2>New machines</h2><span class="mut">enrolled, waiting for your decision; nothing runs on them until approved</span></div>' +
+    list.map((m) => '<div class="svc"><div class="svc-top"><div><span class="dot ' + (m.online ? 'up' : 'down') + '"></span><b>' + esc(m.name) + '</b> <span class="mut">' +
+      esc(m.address || '') + ' · ' + (m.online ? 'connected' : 'not connected') + '</span></div>' +
+      '<div class="' + (m.status === 'rejected' ? 'err' : 'mut') + '" style="font-size:14px">' + (m.status === 'rejected' ? 'rejected' : 'waiting for approval') + '</div></div>' +
+      '<div class="acts"><button class="pri" data-machine-act="approve" data-machine="' + esc(m.name) + '">Approve</button>' +
+      (m.status === 'pending' ? '<button data-machine-act="reject" data-machine="' + esc(m.name) + '">Reject</button>' : '') +
+      '<button class="danger" data-remove-machine="' + esc(m.name) + '">Remove</button></div></div>').join('') + '</section>';
+}
+
+function stateText(st) {
+  if (!st) return '';
+  if (st.error) return '<span class="err">' + esc(st.error) + '</span>';
+  let t = esc(st.active) + (st.sub && st.sub !== st.active ? ' (' + esc(st.sub) + ')' : '');
+  if (st.running && st.pid) t += ' · pid ' + st.pid;
+  if (st.running && st.since) t += ' · since ' + esc(isNaN(Date.parse(st.since)) ? st.since : new Date(st.since).toLocaleString());
+  if (st.active === 'failed' && st.exit_status != null) t += ' · exit ' + st.exit_status;
+  return t;
+}
+function dotClass(st) {
+  if (!st || st.error) return 'down';
+  if (st.active === 'active') return 'up';
+  return st.active;
+}
+
+function svcHtml(s) {
+  const st = s.status || {}, run = st.running, unknown = !!st.error, open = openCmds.has(s.name);
+  return '<div class="svc" data-name="' + esc(s.name) + '">' +
+    '<div class="svc-top"><div><span class="dot ' + esc(dotClass(st)) + '"></span><b>' + esc(s.name) + '</b><span class="ver">v' + s.version + '</span>' +
+      (s.description ? '<div class="mut">' + esc(s.description) + '</div>' : '') + '</div>' +
+    '<div class="mut" style="font-size:14px">' + stateText(st) + '</div></div>' +
+    '<code class="cmd' + (open ? ' open' : '') + '" data-cmd tabindex="0" role="button" aria-expanded="' + open + '">' + hlBash(s.command) + '</code>' +
+    '<div class="acts">' +
+    '<button data-act="start" ' + (run || unknown ? 'disabled' : '') + '>Start</button>' +
+    '<button data-act="stop" ' + (!run || unknown ? 'disabled' : '') + '>Stop</button>' +
+    '<button data-act="restart" ' + (unknown ? 'disabled' : '') + '>Restart</button>' +
+    '<button data-act="logs">' + (openLogs.has(s.name) ? 'Hide logs' : 'Logs') + '</button>' +
+    '<button data-act="history">' + (openHist.has(s.name) ? 'Hide history' : 'History') + '</button>' +
+    '<button data-act="edit">Edit</button>' +
+    '<button data-act="copy">Copy</button>' +
+    '<button data-act="delete" class="danger">Delete</button></div>' +
+    '<p class="err" data-err style="margin:12px 0 0;display:none"></p>' +
+    (openHist.has(s.name) ? '<div class="hist" data-hist><div class="hv mut">Loading…</div></div>' : '') +
+    (openLogs.has(s.name) ? '<pre class="logs" data-logs>Loading…</pre>' : '') + '</div>';
+}
+// Gauges from the machine's fleet-agent (system row, then GPU + VRAM per GPU if it has NVIDIA/AMD cards). Ring: 0-100 %, green < 70 % < amber < 90 % < red.
+const gb = (kb) => (kb / 1048576).toFixed(kb >= 10485760 ? 0 : 1) + ' GB';
+function gauge(label, pct, sub) {
+  const r = 20, c = 2 * Math.PI * r, p = Math.max(0, Math.min(100, pct));
+  const cls = p >= 90 ? 'hot' : p >= 70 ? 'warn' : 'ok';
+  return '<div class="gauge"><svg width="52" height="52" viewBox="0 0 52 52" role="img" aria-label="' + label + ' ' + Math.round(p) + '%">' +
+    '<circle class="bg" cx="26" cy="26" r="' + r + '" fill="none" stroke-width="6"/>' +
+    '<circle class="' + cls + '" cx="26" cy="26" r="' + r + '" fill="none" stroke-width="6" stroke-linecap="round" stroke-dasharray="' + (c * p / 100) + ' ' + c + '" transform="rotate(-90 26 26)"/>' +
+    '<text x="26" y="30.5" text-anchor="middle">' + Math.round(p) + '</text></svg>' +
+    '<div style="min-width:0"><div class="gl">' + label + '</div><div class="gs">' + esc(sub) + '</div></div></div>';
+}
+function gaugesHtml(h) {
+  if (!h || !h.online) return '';
+  const s = h.stats, memUsed = s.mem_total_kb - s.mem_avail_kb, swapUsed = s.swap_total_kb - s.swap_free_kb;
+  return '<div class="gauges">' +
+    gauge('CPU', s.cpu_pct, s.cpus + ' cores · load ' + s.load[0]) +
+    gauge('Memory', 100 * memUsed / s.mem_total_kb, gb(memUsed) + ' / ' + gb(s.mem_total_kb)) +
+    (s.swap_total_kb ? gauge('Swap', 100 * swapUsed / s.swap_total_kb, gb(swapUsed) + ' / ' + gb(s.swap_total_kb)) : gauge('Swap', 0, 'none')) +
+    gauge('Disk /', 100 * s.disk_used_kb / s.disk_total_kb, gb(s.disk_used_kb) + ' / ' + gb(s.disk_total_kb)) + '</div>' +
+    (s.gpus?.length ? '<div class="gauges">' + s.gpus.map((g) => {
+      const short = g.name.replace(/^NVIDIA (GeForce )?/, '').replace(/^AMD (Radeon )?/, '');
+      const extra = [g.temp_c != null && g.temp_c + ' °C', g.power_w != null && g.power_w + ' W'].filter(Boolean).join(' · ');
+      return gauge(esc(short), g.util_pct, extra || 'GPU busy') +
+        gauge(esc(short) + ' VRAM', 100 * g.vram_used_mb / g.vram_total_mb, gb(g.vram_used_mb * 1024) + ' / ' + gb(g.vram_total_mb * 1024));
+    }).join('') + '</div>' : '');
+}
+function headHtml(name) {
+  const h = machines && machines.find((x) => x.name === name);
+  const st = !h ? '<span class="mut">checking…</span>'
+    : h.online ? '<span class="mut">' + esc(h.address) + ' · up ' + fmt(h.stats.uptime_sec) + '</span>'
+    : '<span class="err" title="' + esc(h.error) + '">' + esc(h.address) + ' · offline (agent not connected)</span>';
+  return '<div class="mhead"><h2><span class="dot ' + (!h ? '' : h.online ? 'up' : 'down') + '"></span>' + esc(name) + '</h2>' +
+    '<div class="mside">' + st + '<button class="danger" data-remove-machine="' + esc(name) + '">Remove</button></div></div>' + gaugesHtml(h);
+}
+// One card per machine (machines table order), with that machine's services inside.
+function render() {
+  const names = machines ? approved().map((h) => h.name) : [...new Set(services.map((s) => s.machine))];
+  renderedNewKey = newMachinesKey();
+  $('svcs').innerHTML = newMachinesHtml() + names.map((name) => {
+    const mine = services.filter((s) => s.machine === name);
+    return '<section class="card machine"><div data-hhead="' + esc(name) + '">' + headHtml(name) + '</div>' +
+      (mine.length ? mine.map(svcHtml).join('') : '<div class="empty mut">No services on this machine.</div>') + '</section>';
+  }).join('');
+  for (const n of openLogs) loadLogs(n);
+  for (const n of openHist) loadHist(n);
+}
+
+async function loadServices() {
+  services = await api('/api/services');
+  for (const set of [openLogs, openHist]) for (const n of [...set]) if (!services.some((s) => s.name === n)) set.delete(n);
+  for (const n of [...openCmds]) if (!services.some((s) => s.name === n)) openCmds.delete(n);
+  saveOpenCmds();
+  render();
+}
+async function loadLogs(name) {
+  const box = document.querySelector('.svc[data-name="' + CSS.escape(name) + '"] [data-logs]');
+  if (!box) return;
+  try { box.textContent = (await api('/api/services/' + encodeURIComponent(name) + '/logs?lines=200')).trim() || '(no log lines yet)'; box.scrollTop = box.scrollHeight; }
+  catch (e) { box.textContent = e.message; }
+}
+// Version history: newest first, with which fields changed from the version before it.
+const LABEL = { name: 'name', machine: 'machine', description: 'description', command: 'command', workdir: 'working dir', run_as: 'user', env: 'environment', restart: 'restart', properties: 'properties' };
+async function loadHist(name) {
+  const box = document.querySelector('.svc[data-name="' + CSS.escape(name) + '"] [data-hist]');
+  if (!box) return;
+  try {
+    const vs = await api('/api/services/' + encodeURIComponent(name) + '/versions');
+    const cur = services.find((s) => s.name === name)?.version;
+    box.innerHTML = vs.map((v, i) => {
+      const prev = vs[i + 1];
+      const changed = prev ? Object.keys(LABEL).filter((k) => JSON.stringify(v[k]) !== JSON.stringify(prev[k])).map((k) => LABEL[k]) : [];
+      return '<div class="hv"><div class="hv-top"><span><b>v' + v.version + '</b> <span class="mut">' + esc(new Date(v.created_at).toLocaleString()) +
+        (v.rolled_back_from ? ' · rolled back from v' + v.rolled_back_from : '') +
+        (prev ? ' · ' + (changed.length ? 'changed ' + esc(changed.join(', ')) : 'no changes') : ' · created') + '</span></span>' +
+        (v.version === cur ? '<span class="mut">current</span>' : !v.machine ? '<span class="mut">ran on a removed machine</span>' : '<button data-rollback="' + v.version + '">Roll back to v' + v.version + '</button>') +
+        '</div><code>' + hlBash(v.command) + '</code></div>';
+    }).join('');
+  } catch (e) { box.innerHTML = '<div class="hv err">' + esc(e.message) + '</div>'; }
+}
+function refresh() { loadMachines().catch(() => {}); loadServices().catch((e) => { $('svcs').innerHTML = '<div class="card empty err">' + esc(e.message) + '</div>'; }); }
+
+function toggleCmd(el) {
+  const name = el.closest('.svc').dataset.name;
+  if (openCmds.has(name)) openCmds.delete(name); else openCmds.add(name);
+  saveOpenCmds(); render();
+}
+$('svcs').addEventListener('keydown', (ev) => {
+  const c = ev.target.closest('[data-cmd]');
+  if (c && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); toggleCmd(c); }
+});
+$('svcs').addEventListener('click', async (ev) => {
+  const ma = ev.target.closest('button[data-machine-act]');
+  if (ma) {
+    ma.disabled = true;
+    try { await api('/api/machines/' + encodeURIComponent(ma.dataset.machine) + '/' + ma.dataset.machineAct, { method: 'POST' }); await loadMachines(); }
+    catch (e) { ma.disabled = false; alert(e.message); }
+    return;
+  }
+  const rm = ev.target.closest('button[data-remove-machine]');
+  if (rm) {
+    const name = rm.dataset.removeMachine;
+    if (!confirm('Remove machine “' + name + '”? Its key is deleted, so its agent is cut off until the machine is enrolled again (fleet-agent.js --install).')) return;
+    try { await api('/api/machines/' + encodeURIComponent(name), { method: 'DELETE' }); await loadMachines(); }
+    catch (e) { alert(e.message); }
+    return;
+  }
+  const c = ev.target.closest('[data-cmd]');
+  if (c) { if (!String(getSelection())) toggleCmd(c); return; } // don't toggle while selecting text
+  const rb = ev.target.closest('button[data-rollback]');
+  if (rb) {
+    const row = rb.closest('.svc'), name = row.dataset.name, v = Number(rb.dataset.rollback), errEl = row.querySelector('[data-err]');
+    const svc = services.find((s) => s.name === name);
+    if (!confirm('Roll back “' + name + '” to v' + v + '? This saves it as v' + (svc.version + 1) + '.' + (svc.status?.running ? ' It keeps running the current version until you restart it.' : ''))) return;
+    rb.disabled = true;
+    try { await api('/api/services/' + encodeURIComponent(name) + '/rollback', { method: 'POST', body: JSON.stringify({ version: v }) }); await loadServices(); }
+    catch (e) { rb.disabled = false; errEl.textContent = e.message; errEl.style.display = 'block'; }
+    return;
+  }
+  const b = ev.target.closest('button[data-act]'); if (!b) return;
+  const row = b.closest('.svc'), name = row.dataset.name, act = b.dataset.act, errEl = row.querySelector('[data-err]');
+  const svc = services.find((s) => s.name === name);
+  errEl.style.display = 'none';
+  if (act === 'logs' || act === 'history') { const set = act === 'logs' ? openLogs : openHist; set.has(name) ? set.delete(name) : set.add(name); render(); return; }
+  if (act === 'edit') return openForm(svc);
+  if (act === 'copy') return openForm(svc, true);
+  if (act === 'delete' && !confirm('Delete “' + name + '”? It will be stopped on ' + svc.machine + ' first.')) return;
+  row.querySelectorAll('button').forEach((x) => x.disabled = true);
+  try {
+    if (act === 'delete') {
+      try { await api('/api/services/' + encodeURIComponent(name), { method: 'DELETE' }); }
+      catch (e) {
+        if (!e.canForce || !confirm(e.message + '\n\nDelete “' + name + '” anyway? It can\'t be stopped from here, so it may keep running on ' + svc.machine + ' until that machine reboots.')) throw e;
+        await api('/api/services/' + encodeURIComponent(name) + '?force=1', { method: 'DELETE' });
+      }
+    }
+    else await api('/api/services/' + encodeURIComponent(name) + '/' + act, { method: 'POST' });
+    await loadServices();
+  } catch (e) {
+    row.querySelectorAll('button').forEach((x) => x.disabled = false);
+    errEl.textContent = e.message; errEl.style.display = 'block';
+  }
+});
+
+// Edit a service, or with copy = true start a new one prefilled from it.
+function openForm(svc, copy = false) {
+  editing = copy ? null : svc || null;
+  const f = $('form');
+  f.reset(); $('ferr').textContent = '';
+  f.machine.innerHTML = approved().map((h) => '<option>' + esc(h.name) + '</option>').join('');
+  $('ftitle').textContent = copy ? 'New service (copy of ' + svc.name + ')' : svc ? 'Edit ' + svc.name : 'New service';
+  if (svc) {
+    for (const k of ['name', 'machine', 'description', 'command', 'workdir', 'run_as', 'restart']) f[k].value = svc[k] ?? '';
+    f.env.value = Object.entries(svc.env || {}).map(([k, v]) => k + '=' + v).join('\n');
+    f.properties.value = (svc.properties || []).join('\n');
+    if (copy) f.name.value = (svc.name + '-copy').slice(0, 40);
+  }
+  $('dlg').showModal();
+  syncCmd();
+  fit(f.env); fit(f.properties);
+}
+// Keep the coloured layer in step with the command box; the box grows to fit, so it never scrolls.
+function syncCmd() {
+  const ta = $('form').command;
+  $('cmdhl').innerHTML = hlBash(ta.value) + '\n';
+  fit(ta, 0);
+}
+$('form').command.addEventListener('input', syncCmd);
+// Environment and properties boxes also grow to fit their lines.
+function fit(ta, extra = 2) { ta.style.height = 'auto'; ta.style.height = (ta.scrollHeight + extra) + 'px'; }
+for (const n of ['env', 'properties']) $('form')[n].addEventListener('input', (e) => fit(e.target));
+$('new').onclick = () => openForm(null);
+$('cancel').onclick = () => $('dlg').close();
+$('form').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const f = ev.target, env = {};
+  for (const line of f.env.value.split('\n')) {
+    const l = line.trim(); if (!l) continue;
+    const i = l.indexOf('=');
+    if (i < 1) { $('ferr').textContent = 'Environment line needs KEY=value: ' + l; return; }
+    env[l.slice(0, i).trim()] = l.slice(i + 1);
+  }
+  const body = { name: f.name.value.trim(), machine: f.machine.value, description: f.description.value.trim(), command: f.command.value,
+    workdir: f.workdir.value.trim() || null, run_as: f.run_as.value.trim() || null, restart: f.restart.value, env,
+    properties: f.properties.value.split('\n').map((l) => l.trim()).filter(Boolean) };
+  $('save').disabled = true;
+  try {
+    if (editing) await api('/api/services/' + encodeURIComponent(editing.name), { method: 'PUT', body: JSON.stringify(body) });
+    else await api('/api/services', { method: 'POST', body: JSON.stringify(body) });
+    $('dlg').close(); await loadServices();
+  } catch (e) { $('ferr').textContent = e.message; }
+  finally { $('save').disabled = false; }
+};
+
+$('ref').onclick = refresh;
+$('out').onclick = async () => { await fetch('/logout', { method: 'POST' }); location.href = '/login'; };
+refresh();
+setInterval(() => { if (!$('dlg').open) loadServices().catch(() => {}); }, 15000);
+setInterval(() => { if (!$('dlg').open) loadMachines().catch(() => {}); }, 5000);
+</script></body></html>
