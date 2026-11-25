@@ -201,6 +201,7 @@ curl -k -H "Authorization: Bearer $FLEET_API_KEY" https://<server>/api/services
 | GET | `/api/machines` | machines with status (pending / approved / rejected), online, stats |
 | POST | `/api/machines/{name}/approve`, `/reject` | decide on a machine |
 | DELETE | `/api/machines/{name}` | remove a machine and its key |
+| PUT | `/api/machines/order` | `{"names": ["…", …]}`: the order machines are shown in (every machine exactly once); the ▲ ▼ buttons on the page |
 | GET, POST | `/api/services` | list (with live status) / create |
 | GET, PUT, DELETE | `/api/services/{name}` | read / save (new version) / delete: stops it first and waits for that (`?force=1` deletes it from the database only, if its machine is unreachable) |
 | POST | `/api/services/{name}/start`, `/stop`, `/restart` | control (`?wait=1&timeout=<s>`, see below) |

@@ -49,7 +49,7 @@ describe('REST API', () => {
   // ---------------------------------------------------------------------------------------------------------------
   describe('authentication', () => {
     const PROTECTED = [['GET', '/api/machines'], ['POST', '/api/machines/box/approve'], ['POST', '/api/machines/box/reject'],
-      ['DELETE', '/api/machines/box'], ['GET', '/api/services'], ['POST', '/api/services'], ['GET', '/api/services/x'],
+      ['DELETE', '/api/machines/box'], ['PUT', '/api/machines/order'], ['GET', '/api/services'], ['POST', '/api/services'], ['GET', '/api/services/x'],
       ['PUT', '/api/services/x'], ['DELETE', '/api/services/x'], ['POST', '/api/services/x/start'], ['POST', '/api/services/x/stop'],
       ['POST', '/api/services/x/restart'], ['GET', '/api/services/x/logs'], ['GET', '/api/services/x/versions'],
       ['POST', '/api/services/x/rollback'], ['GET', '/api/api-key'], ['POST', '/api/api-key/reroll'], ['POST', '/api/password'],
@@ -168,6 +168,29 @@ describe('REST API', () => {
       const back = new FakeAgent(srv, 'pend', { key: p.key, reconnect: false });
       await assert.rejects(back.connect(), (e) => e.code === 4003);
       assert.ok(!(await api.get('/api/machines')).json.some((x) => x.name === 'pend'));
+    });
+    it('order: PUT /api/machines/order sets the order of machines (and of the service list); every machine exactly once', async () => {
+      const second = await newAgent('alpha');
+      await api.post('/api/machines/alpha/approve');
+      await api.post('/api/services', svcBody({ name: 'on-alpha', machine: 'alpha' }));
+      await api.post('/api/services', svcBody({ name: 'on-box', machine: 'box' }));
+      const names = (await api.get('/api/machines')).json.map((m) => m.name);
+      assert.deepEqual(names.slice(0, 2), ['box', 'alpha'], 'enrollment order');
+      const reversed = [...names].reverse();
+      const r = await api.put('/api/machines/order', { names: reversed });
+      assert.equal(r.status, 200); assert.deepEqual(r.json.names, reversed);
+      assert.deepEqual((await api.get('/api/machines')).json.map((m) => m.name), reversed);
+      const svcOrder = (await api.get('/api/services')).json.map((x) => x.machine);
+      assert.deepEqual(svcOrder, [...svcOrder].sort((a, b) => reversed.indexOf(a) - reversed.indexOf(b)), 'services follow the machine order');
+      for (const bad of [undefined, 'box', [], names.slice(1), [...names, 'box'], [...names.slice(1), 'ghost'], [...names.slice(1), names[1]]]) {
+        const x = await api.put('/api/machines/order', { names: bad });
+        assert.equal(x.status, 400, JSON.stringify(bad)); assert.equal(x.json.code, 'invalid');
+      }
+      assert.deepEqual((await api.get('/api/machines')).json.map((m) => m.name), reversed, 'a refused order changes nothing');
+      assert.equal((await srv.req('PUT', '/api/machines/order', { body: { names } })).status, 401);
+      await api.put('/api/machines/order', { names });
+      await api.del('/api/services/on-alpha'); await api.del('/api/services/on-box');
+      second.close(); await api.del('/api/machines/alpha');
     });
     it('a machine with services can be neither rejected nor removed (409)', async () => {
       assert.equal((await api.post('/api/services', svcBody({ name: 'pin' }))).status, 201);

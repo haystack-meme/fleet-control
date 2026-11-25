@@ -75,6 +75,18 @@ app.get('/api/machines', (req, res) => {
   }));
 });
 
+// Set the order machines are shown in: {names: [...]}, every enrolled machine exactly once (so a machine that
+// enrolled meanwhile can't be left out by accident).
+app.put('/api/machines/order', (req, res) => {
+  const names = (req.body || {}).names;
+  const all = Object.keys(db.machines());
+  if (!Array.isArray(names) || names.length !== all.length || new Set(names).size !== names.length || !names.every((n) => all.includes(n)))
+    throw new ApiError(400, 'invalid', `names must list every machine exactly once: ${all.join(', ')}`);
+  db.tx(() => names.forEach((n, i) => db.run('UPDATE machines SET sort_order = ? WHERE name = ?', i + 1, n)));
+  console.log(`[agent] machine order: ${names.join(', ')}`);
+  res.json({ ok: true, names });
+});
+
 // Approve / reject a machine. Rejected stays rejected until approved.
 for (const [action, status] of [['approve', 'approved'], ['reject', 'rejected']])
   app.post(`/api/machines/:name/${action}`, (req, res) => {

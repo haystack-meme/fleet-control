@@ -17,7 +17,7 @@ a.btn{display:inline-block;font:inherit;border-radius:8px;border:1px solid var(-
 button:disabled{opacity:.5;cursor:default}
 .mut{color:var(--mut)}.err{color:var(--bad)}
 .machine{margin-bottom:36px;overflow:hidden}.mhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;padding:16px 22px;background:var(--code)}
-.mhead h2{margin:0;font-size:17px}.mhead .mside{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.mhead button{padding:3px 9px;font-size:13px}.newm{border-color:var(--warn)}.newm .mhead{background:color-mix(in srgb,var(--warn) 12%,var(--card))}.machine .empty{border-top:1px solid var(--line);padding:22px}
+.mhead h2{margin:0;font-size:17px}.move{display:inline-flex;gap:4px}.move button{min-width:30px}.mhead .mside{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.mhead button{padding:3px 9px;font-size:13px}.newm{border-color:var(--warn)}.newm .mhead{background:color-mix(in srgb,var(--warn) 12%,var(--card))}.machine .empty{border-top:1px solid var(--line);padding:22px}
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;background:var(--mut);vertical-align:1px}
 .up{background:var(--ok)}.down,.failed{background:var(--bad)}.activating,.deactivating{background:var(--warn)}
 .svc{padding:22px;border-top:1px solid var(--line)}.svc .mut:not(.ver){margin-top:2px}
@@ -267,8 +267,11 @@ function headHtml(name) {
   const st = !h ? '<span class="mut">checking…</span>'
     : h.online ? '<span class="mut">' + esc(h.address) + ' · up ' + fmt(h.stats.uptime_sec) + '</span>'
     : '<span class="err" title="' + esc(h.error) + '">' + esc(h.address) + ' · offline (agent not connected)</span>';
+  const order = approved().map((x) => x.name), i = order.indexOf(name);
+  const arrows = '<span class="move"><button data-move="-1" data-machine="' + esc(name) + '" aria-label="Move ' + esc(name) + ' up" title="Move up"' + (i <= 0 ? ' disabled' : '') + '>▲</button>' +
+    '<button data-move="1" data-machine="' + esc(name) + '" aria-label="Move ' + esc(name) + ' down" title="Move down"' + (i < 0 || i >= order.length - 1 ? ' disabled' : '') + '>▼</button></span>';
   return '<div class="mhead"><h2><span class="dot ' + (!h ? '' : h.online ? 'up' : 'down') + '"></span>' + esc(name) + '</h2>' +
-    '<div class="mside">' + st + '<button class="danger" data-remove-machine="' + esc(name) + '">Remove</button></div></div>' + gaugesHtml(h);
+    '<div class="mside">' + st + arrows + '<button class="danger" data-remove-machine="' + esc(name) + '">Remove</button></div></div>' + gaugesHtml(h);
 }
 // One card per machine (machines table order), with that machine's services inside.
 function render() {
@@ -336,6 +339,20 @@ $('svcs').addEventListener('click', async (ev) => {
     ma.disabled = true;
     try { await api('/api/machines/' + encodeURIComponent(ma.dataset.machine) + '/' + ma.dataset.machineAct, { method: 'POST' }); await loadMachines(); }
     catch (e) { ma.disabled = false; alert(e.message); }
+    return;
+  }
+  const mv = ev.target.closest('button[data-move]');
+  if (mv) {
+    // Swap with the neighbour; the order sent lists every machine (approved ones as shown, then the others).
+    const order = approved().map((x) => x.name), i = order.indexOf(mv.dataset.machine), j = i + Number(mv.dataset.move);
+    if (i < 0 || j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    const names = order.concat(machines.filter((m) => m.status !== 'approved').map((m) => m.name));
+    document.querySelectorAll('button[data-move]').forEach((b) => { b.disabled = true; });
+    try { await api('/api/machines/order', { method: 'PUT', body: JSON.stringify({ names }) }); }
+    catch (e) { alert(e.message); }
+    await loadMachines().catch(() => {});
+    document.querySelector('[data-hhead="' + CSS.escape(mv.dataset.machine) + '"] button[data-move="' + mv.dataset.move + '"]')?.focus();
     return;
   }
   const rm = ev.target.closest('button[data-remove-machine]');
