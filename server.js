@@ -8,7 +8,9 @@ const services = require('./lib/services');
 
 const pub = path.join(__dirname, 'public');
 const app = express();
-app.set('trust proxy', 'loopback'); // nginx in front: req.ip = real client
+// The TLS proxy in front is trusted for the client's address. Default loopback (proxy on the same host);
+// Docker sets FLEET_TRUST_PROXY=uniquelocal (the proxy container is on a private network).
+app.set('trust proxy', process.env.FLEET_TRUST_PROXY || 'loopback');
 app.use(express.json());
 
 app.get('/health', (req, res) => res.json({ ok: true }));

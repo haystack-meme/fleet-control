@@ -1,7 +1,7 @@
 'use strict';
 // fleet-server admin (all data lives in MariaDB). Run on the server, in the fleet-server folder:
 //   node bin/admin.js password <new password>   set the web site password (existing sessions stay signed in)
-//   node bin/admin.js default-user <user>        Linux user for services that don't name one (default: the server's user)
+//   node bin/admin.js default-user <user>        Linux user for services that don't name one
 //   node bin/admin.js machines                   list machines (enrolled with fleet-agent.js --install)
 //   node bin/admin.js remove-machine <name>      forget a machine and its key (not while it has services)
 const db = require('../lib/db');

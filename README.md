@@ -23,9 +23,26 @@ Run and manage long-running commands on a fleet of Linux machines from one web p
 ## Requirements
 
 - Linux with systemd on every machine, **Node.js 26.13.1 or newer** at `/usr/local/bin/node`.
-- On the server: MariaDB (10.11+) and a TLS reverse proxy such as nginx.
+- The server: either Docker with Compose, or MariaDB (10.11+) plus a TLS reverse proxy such as nginx.
 
-## Server setup
+## Quick start with Docker
+
+Runs MariaDB, fleet-server and an HTTPS proxy (with a self-signed certificate made on first start):
+
+```sh
+git clone https://github.com/haystack-meme/fleet-control.git && cd fleet-control
+cp .env.example .env
+sed -i "s/^FLEET_DB_PASSWORD=.*/FLEET_DB_PASSWORD=$(openssl rand -hex 24)/" .env
+docker compose up -d
+docker compose exec server node bin/admin.js password '<your password>'
+docker compose exec server node bin/admin.js default-user <user>   # Linux user services run as unless they name one
+```
+
+Then open `https://<server>/` and sign in. Data lives in the `db` volume, the certificate in `certs`. Ports and the
+certificate's names can be set in `.env`. Only the server runs in Docker: the agents run directly on each machine
+(see [Adding a machine](#adding-a-machine)).
+
+## Server setup without Docker
 
 ```sh
 # 1. a user for the server, and the code
@@ -41,7 +58,7 @@ sudo mariadb < sql/setup.sql
 sudo cp deploy/fleet-server.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now fleet-server
 
-# 4. web password, and optionally the default user services run as (else the server's user)
+# 4. web password, and the Linux user services run as unless they name one
 sudo -u fleet node bin/admin.js password '<your password>'
 sudo -u fleet node bin/admin.js default-user <user>
 
