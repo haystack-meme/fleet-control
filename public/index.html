@@ -64,7 +64,7 @@ form.f .hlwrap textarea{position:relative;display:block;width:100%;min-height:5.
 </style></head><body>
 <div class="wrap">
 <header><h1>Fleet</h1>
-<div><button id="new" class="pri">New service</button> <button id="ref">Refresh</button> <button id="bak" title="Download the whole database (machines, services, history, settings)">Download backup</button> <button id="rst" title="Replace everything with a downloaded backup">Restore…</button><input id="rstf" type="file" accept=".fleetbackup" hidden> <button id="pwb">Password</button> <button id="out">Sign out</button></div></header>
+<div><button id="new" class="pri">New service</button> <button id="ref">Refresh</button> <button id="bak" title="Download the whole database (machines, services, history, settings)">Download backup</button> <button id="rst" title="Replace everything with a downloaded backup">Restore…</button><input id="rstf" type="file" accept=".fleetbackup" hidden> <button id="keyb">API key</button> <button id="pwb">Password</button> <button id="out">Sign out</button></div></header>
 
 <div id="svcs"><div class="card empty mut">Loading…</div></div>
 </div>
@@ -86,6 +86,14 @@ form.f .hlwrap textarea{position:relative;display:block;width:100%;min-height:5.
 <label>Extra systemd properties <span class="mut">(one Key=Value per line, e.g. SupplementaryGroups=video render)</span><textarea name="properties" rows="3" spellcheck="false"></textarea></label>
 <p id="ferr" class="err" style="margin:0;min-height:1.2em"></p>
 <div class="fbtns"><button type="button" id="cancel">Cancel</button><button class="pri" id="save">Save</button></div>
+</form></dialog>
+<dialog id="keydlg" style="width:min(560px,calc(100vw - 24px))"><form class="f" method="dialog">
+<h1 style="font-size:18px;margin:0">API key</h1>
+<p class="mut" style="margin:0;font-size:14px">Scripts can call every <code>/api/…</code> route with this key instead of signing in:
+send it as <code>Authorization: Bearer &lt;key&gt;</code> or <code>X-API-Key: &lt;key&gt;</code>.</p>
+<input id="keyval" readonly spellcheck="false" style="font-family:ui-monospace,monospace;font-size:13px">
+<p id="keyerr" class="err" style="margin:0;min-height:1.2em"></p>
+<div class="fbtns"><button type="button" id="keyroll" class="danger">Reroll</button><button type="button" id="keycopy">Copy</button><button class="pri">Close</button></div>
 </form></dialog>
 <dialog id="pwdlg" style="width:min(380px,calc(100vw - 24px))"><form class="f" id="pwform" method="dialog">
 <h1 style="font-size:18px;margin:0">Change password</h1>
@@ -406,6 +414,24 @@ $('form').onsubmit = async (ev) => {
 };
 
 $('ref').onclick = refresh;
+const showKey = (k) => { $('keyval').value = k; $('keycopy').textContent = 'Copy'; };
+$('keyb').onclick = async () => {
+  $('keyerr').textContent = ''; $('keyval').value = '';
+  $('keydlg').showModal();
+  try { showKey((await api('/api/api-key')).key); } catch (e) { $('keyerr').textContent = e.message; }
+};
+$('keycopy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('keyval').value); }
+  catch { $('keyval').select(); document.execCommand('copy'); }
+  $('keycopy').textContent = 'Copied';
+};
+$('keyroll').onclick = async () => {
+  if (!confirm('Make a new API key? The current key stops working immediately, for every script that uses it.')) return;
+  $('keyroll').disabled = true;
+  try { showKey((await api('/api/api-key/reroll', { method: 'POST' })).key); $('keyerr').textContent = ''; }
+  catch (e) { $('keyerr').textContent = e.message; }
+  finally { $('keyroll').disabled = false; }
+};
 $('pwb').onclick = () => { $('pwform').reset(); $('pwerr').textContent = ''; $('pwdlg').showModal(); };
 $('pwcancel').onclick = () => $('pwdlg').close();
 $('pwform').onsubmit = async (ev) => {

@@ -36,8 +36,16 @@ app.post('/login', webAuth.login);
 app.post('/logout', webAuth.logout);
 app.get('/', (req, res) => webAuth.valid(req) ? res.sendFile(path.join(pub, 'index.html')) : res.redirect(302, '/login'));
 
-// API: needs a signed-in web session (the password is the only security).
-app.use('/api', (req, res, next) => (webAuth.valid(req) ? next() : res.status(401).json({ error: 'sign in first' })));
+// API: needs a signed-in web session or the API key.
+app.use('/api', (req, res, next) => (webAuth.valid(req) || webAuth.validKey(req) ? next() : res.status(401).json({ error: 'sign in first (or send the API key)' })));
+
+// The API key: show it, or replace it (the old one stops working at once).
+app.get('/api/api-key', (req, res) => res.json({ key: webAuth.apiKey() }));
+app.post('/api/api-key/reroll', (req, res) => {
+  const key = webAuth.rerollApiKey();
+  console.log(`[auth] API key rerolled from ${req.ip}`);
+  res.json({ key });
+});
 
 // Change the web password (needs the current one; signs out every other session).
 app.post('/api/password', webAuth.changePassword);
@@ -103,6 +111,7 @@ app.get('/api/backup', (req, res) => {
 app.post('/api/restore', express.raw({ type: '*/*', limit: '200mb' }), (req, res) => {
   if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'no file' });
   const counts = backup.restore(req.body);
+  webAuth.ensureApiKey(); // a backup always has one, but never leave the app without a key
   agent.kickAll();
   console.log(`[backup] restored from an upload by ${req.ip}: ${counts.machines} machines, ${counts.services} services`);
   res.json({ ok: true, ...counts });
@@ -115,6 +124,7 @@ app.use((err, req, res, next) => {
 });
 
 db.migrate();
+webAuth.ensureApiKey();
 console.log(`database: ${db.file}`);
 {
   const every = (ms, fn) => setInterval(() => { try { fn(); } catch (e) { console.error(e); } }, ms).unref();

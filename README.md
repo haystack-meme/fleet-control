@@ -92,7 +92,13 @@ Run the same command again to update the agent; it keeps its key while the serve
 
 ### API
 
-All endpoints except `/health`, `/login`, `/enroll` and `/install/*` need a signed-in session (cookie from `POST /login`).
+All endpoints except `/health`, `/login`, `/enroll` and `/install/*` need a signed-in session (cookie from `POST /login`)
+or the API key, sent as `Authorization: Bearer <key>` or `X-API-Key: <key>`. There is always exactly one key: a
+random one is made the first time the server starts; see it, copy it or reroll it with **API key** on the page.
+
+```sh
+curl -k -H "Authorization: Bearer $FLEET_API_KEY" https://<server>/api/services
+```
 
 | Method | Path | |
 |---|---|---|
@@ -103,6 +109,8 @@ All endpoints except `/health`, `/login`, `/enroll` and `/install/*` need a sign
 | GET, PUT, DELETE | `/api/services/{name}` | read / save (new version) / delete (`?force=1` if its machine is unreachable) |
 | POST | `/api/services/{name}/start`, `/stop`, `/restart` | control |
 | GET | `/api/services/{name}/logs?lines=200` | journal |
+| GET | `/api/api-key` | `{"key": "…"}`: the current API key |
+| POST | `/api/api-key/reroll` | make a new key (`{"key": "…"}`); the old one stops working at once |
 | POST | `/api/password` | `{"current": "…", "password": "…"}`: change the web password; signs out every other session |
 | GET | `/api/backup` | backup file `fleet-<UTC time>.fleetbackup`: gzip of the whole database + the SHA-256 of that gzip (last 32 bytes) |
 | POST | `/api/restore` | body = a backup file exactly as downloaded (refused if the SHA-256 doesn't match): replaces machines, settings (incl. the password), services and their history; sessions are kept |
@@ -113,8 +121,8 @@ All endpoints except `/health`, `/login`, `/enroll` and `/install/*` need a sign
 
 This is built for a trusted home or lab network:
 
-- The web password is the only protection for the page and API. Anyone who signs in can run any command, as any user
-  (including root), on every approved machine.
+- The web password and the API key are the only protection for the page and API. Anyone who signs in, or has the
+  key, can run any command, as any user (including root), on every approved machine.
 - Anyone who can reach the server can enroll a machine; it does nothing until approved.
 - Agents encrypt their connection but don't verify the server's certificate.
 
