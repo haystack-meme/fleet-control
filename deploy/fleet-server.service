@@ -1,0 +1,19 @@
+# fleet-server as a systemd service. Copy to /etc/systemd/system/, adjust User/WorkingDirectory, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now fleet-server
+[Unit]
+Description=fleet-server (web page + API; machines connect through their fleet-agent)
+After=network-online.target mariadb.service
+Wants=network-online.target mariadb.service
+StartLimitIntervalSec=0
+
+[Service]
+User=fleet
+WorkingDirectory=/opt/fleet-control
+ExecStart=/usr/local/bin/node server.js
+# Optional: FLEET_HOST, FLEET_PORT (default 127.0.0.1:3100), FLEET_DB, FLEET_DB_USER, FLEET_DB_SOCKET, FLEET_AGENT_DIR
+#Environment=FLEET_AGENT_DIR=/srv/fleet/install
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

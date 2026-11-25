@@ -1,0 +1,14 @@
+# fleet-agent: connects out to fleet-server, runs this machine's fleet-* services and sends stats.
+# Template: `fleet-agent.js --install --server <ip>` downloads it from the server and replaces @SERVER@ with that address.
+[Unit]
+Description=fleet-agent (connects to fleet-server at @SERVER@)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/node /usr/local/lib/fleet-agent/fleet-agent.js --run --server @SERVER@
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
