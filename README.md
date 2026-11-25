@@ -34,11 +34,10 @@ Runs fleet-server and an HTTPS proxy (with a self-signed certificate made on fir
 ```sh
 git clone https://github.com/haystack-meme/fleet-control.git && cd fleet-control
 docker compose up -d
-docker compose exec server node bin/admin.js password '<your password>'
-docker compose exec server node bin/admin.js default-user <user>   # Linux user services run as unless they name one
 ```
 
-Then open `https://<server>/` and sign in. The database (`fleet.db`) lives in the `data` volume, the certificate in
+Then open `https://<server>/`: with no password set yet, the page asks you to choose one (the first person to open
+it sets it, so do this right away). The database (`fleet.db`) lives in the `data` volume, the certificate in
 `certs`. Ports and the certificate's names can be set in an optional `.env` (see `.env.example`). To add your own nginx
 locations to the proxy (for example a public file folder), put them in a `compose.override.yaml` (git-ignored) that
 mounts `*.conf` files into `/etc/nginx/fleet.d/`. Only the server runs in Docker: the agents run directly on each
@@ -57,11 +56,7 @@ cd /opt/fleet-control && sudo -u fleet npm ci --omit=dev
 sudo cp deploy/fleet-server.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now fleet-server
 
-# 3. web password, and the Linux user services run as unless they name one
-sudo -u fleet node bin/admin.js password '<your password>'
-sudo -u fleet node bin/admin.js default-user <user>
-
-# 4. HTTPS in front of it: see deploy/nginx.conf.example
+# 3. HTTPS in front of it: see deploy/nginx.conf.example
 ```
 
 Then open `https://<server>/` and sign in.
@@ -87,12 +82,12 @@ Run the same command again to update the agent; it keeps its key while the serve
   `systemd-run --unit=fleet-<name>.service -p User=… -- /bin/bash -c <command>` on its machine.
 - Services are transient: after a machine reboots they are stopped until started again from the page.
 - The server stores only a hash of each machine key and of each session cookie. All data lives in one SQLite file
-  (`data/fleet.db`, or `FLEET_DB_FILE`); back it up with **Download backup** on the page or
-  `node bin/admin.js backup <file>.fleetbackup` (the same file; safe while the server runs). Restore it with
-  **Restore…** on the page. The file is gzip(database) followed by the SHA-256 of the gzip bytes; the plain
+  (`data/fleet.db`, or `FLEET_DB_FILE`); back it up with **Download backup** on the page (safe while the server
+  runs) and restore it with **Restore…**. The file is gzip(database) followed by the SHA-256 of the gzip bytes; the plain
   database is `head -c -32 <file> | gunzip > fleet.db`.
-- `node bin/admin.js machines | remove-machine <name> | password <pw> | default-user <user> | backup <file>` for the
-  command line.
+- Everything is done on the page. The only command-line tool is for a forgotten password:
+  `node bin/admin.js clear-password` (Docker: `docker compose exec server node bin/admin.js clear-password`) removes
+  it and signs everyone out; the next person to open the page sets a new one.
 
 ### API
 

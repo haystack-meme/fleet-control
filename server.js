@@ -31,6 +31,7 @@ app.post('/enroll', (req, res) => {
 
 // Web site: the login page is public, the main page needs a session.
 app.get('/login', (req, res) => res.sendFile(path.join(pub, 'login.html')));
+app.get('/login/status', (req, res) => res.json({ password_set: webAuth.passwordSet() })); // false: the page asks for a new password
 app.post('/login', webAuth.login);
 app.post('/logout', webAuth.logout);
 app.get('/', (req, res) => webAuth.valid(req) ? res.sendFile(path.join(pub, 'index.html')) : res.redirect(302, '/login'));

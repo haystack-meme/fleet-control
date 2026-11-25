@@ -1,7 +1,5 @@
 # fleet-control with Docker: fleet-server + an HTTPS proxy.
-#   docker compose up -d
-#   docker compose exec server node bin/admin.js password '<your password>'
-#   docker compose exec server node bin/admin.js default-user <user>
+#   docker compose up -d     then open https://<server>/ and choose the password
 # Optional settings (ports, certificate names) go in .env; see .env.example.
 # The agents run directly on each machine (they control its systemd), not in Docker.
 name: fleet

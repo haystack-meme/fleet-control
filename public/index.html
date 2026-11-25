@@ -79,7 +79,7 @@ form.f .hlwrap textarea{position:relative;display:block;width:100%;min-height:5.
 <div class="hlwrap"><pre id="cmdhl" aria-hidden="true"></pre><textarea name="command" rows="3" required spellcheck="false" autocapitalize="off" autocomplete="off"></textarea></div></label>
 <div class="row2">
 <label>Working directory <input name="workdir" placeholder="/srv/app" autocomplete="off"></label>
-<label>Run as user <input name="run_as" placeholder="default user" autocomplete="off"></label></div>
+<label>Run as user <input name="run_as" placeholder="e.g. www-data" autocomplete="off" required></label></div>
 <div class="row2">
 <label>Restart <select name="restart"><option value="no">never</option><option value="on-failure">on failure</option><option value="always">always</option></select></label></div>
 <label>Environment <span class="mut">(one KEY=value per line)</span><textarea name="env" rows="3" spellcheck="false"></textarea></label>
