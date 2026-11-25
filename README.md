@@ -85,9 +85,11 @@ Run the same command again to update the agent; it keeps its key while the serve
   `systemd-run --unit=fleet-<name>.service -p User=… -- /bin/bash -c <command>` on its machine.
 - Services are transient: after a machine reboots they are stopped until started again from the page.
 - The server stores only a hash of each machine key and of each session cookie. All data lives in one SQLite file
-  (`data/fleet.db`, or `FLEET_DB_FILE`); back it up by copying it while the server is stopped, or with
-  `sqlite3 fleet.db ".backup copy.db"` while it runs.
-- `node bin/admin.js machines | remove-machine <name> | password <pw> | default-user <user>` for the command line.
+  (`data/fleet.db`, or `FLEET_DB_FILE`); back it up with `node bin/admin.js backup <file>` (safe while
+  the server runs; with Docker, e.g. `docker compose exec server node bin/admin.js backup /app/data/backup.db` and
+  then `docker compose cp server:/app/data/backup.db .`).
+- `node bin/admin.js machines | remove-machine <name> | password <pw> | default-user <user> | backup <file>` for the
+  command line.
 
 ### API
 

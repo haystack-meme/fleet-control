@@ -54,7 +54,7 @@ function activate(key) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`wss://${args.server}/agent`);
     const timer = setTimeout(() => { ws.close(); reject(new Error('no answer from the server')); }, 15000);
-    ws.onopen = async () => ws.send(JSON.stringify({ type: 'hello', machine: os.hostname(), key, stats: await withGpus() }));
+    ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', machine: os.hostname(), key, stats: stats() }));
     ws.onmessage = (ev) => { if (JSON.parse(ev.data).type === 'welcome') { clearTimeout(timer); ws.close(); resolve(); } };
     ws.onclose = (ev) => { clearTimeout(timer); reject(new Error(`refused: ${ev.reason || ev.code}`)); };
   });
@@ -99,14 +99,15 @@ if (args.run && !KEY) { console.error(`no key in ${KEY_FILE}: run --install firs
 const UNIT = /^fleet-[a-z0-9][a-z0-9-]{0,39}\.service$/;
 const oneLine = (s) => typeof s === 'string' && !/[\0\r\n]/.test(s);
 const fail = (msg) => { throw new Error(msg); };
+const STOP_TIMEOUT_MS = 10 * 60 * 1000; // the server waits a little longer than this for a stop
 
-function exec(cmd, args) {
-  return new Promise((resolve) => execFile(cmd, args, { timeout: 30000, maxBuffer: 16 << 20 }, (err, stdout, stderr) =>
+function exec(cmd, args, { timeoutMs = 30000 } = {}) {
+  return new Promise((resolve) => execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 16 << 20 }, (err, stdout, stderr) =>
     resolve({ code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, stdout, stderr })));
 }
-async function must(cmd, args, okCodes = [0]) {
-  const r = await exec(cmd, args);
-  if (!okCodes.includes(r.code)) fail(`${cmd} failed: ${(r.stderr || r.stdout).trim()}`);
+async function must(cmd, args, okCodes = [0], opts) {
+  const r = await exec(cmd, args, opts);
+  if (!okCodes.includes(r.code)) fail(`${cmd} failed: ${(r.stderr || r.stdout).trim() || `exit ${r.code}`}`);
   return r;
 }
 // fleet-agent.service (this agent) and fleet-server.service (the server) are never managed units.
@@ -138,7 +139,7 @@ function stats() {
 // ---- GPUs: NVIDIA via nvidia-smi (if installed), AMD via the amdgpu sysfs files. Others (e.g. Intel iGPUs) report nothing. ----
 const readNum = (f) => { try { return Number(fs.readFileSync(f, 'utf8').trim()); } catch { return null; } };
 // AMD cards: [{ dir, name }] found once at start; the name comes from lspci when available (sysfs has none).
-const amdCards = fs.readdirSync('/sys/class/drm').filter((c) => /^card\d+$/.test(c)).map((c) => `/sys/class/drm/${c}/device`)
+const amdCards = (() => { try { return fs.readdirSync('/sys/class/drm'); } catch { return []; } })().filter((c) => /^card\d+$/.test(c)).map((c) => `/sys/class/drm/${c}/device`)
   .filter((d) => readNum(`${d}/gpu_busy_percent`) !== null && fs.existsSync(`${d}/mem_info_vram_total`))
   .map((dir) => {
     const slot = fs.realpathSync(dir).split('/').pop();
@@ -153,7 +154,7 @@ const amdCards = fs.readdirSync('/sys/class/drm').filter((c) => /^card\d+$/.test
   });
 async function gpus() {
   const out = [];
-  const smi = await exec('nvidia-smi', ['--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw', '--format=csv,noheader,nounits']);
+  const smi = await exec('nvidia-smi', ['--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw', '--format=csv,noheader,nounits'], { timeoutMs: 5000 });
   if (smi.code === 0) for (const line of smi.stdout.trim().split('\n').filter(Boolean)) {
     const [name, util, used, total, temp, power] = line.split(',').map((x) => x.trim());
     out.push({ name, util_pct: +util, vram_used_mb: +used, vram_total_mb: +total, temp_c: +temp || null, power_w: Math.round(+power) || null });
@@ -193,8 +194,9 @@ const ops = {
     await must('systemd-run', [...args, '--', '/bin/bash', '-c', command]);
     console.log(`[agent] started ${unit}`);
   },
+  // Waits as long as the unit takes to stop (its TimeoutStopSec, default 90 s), up to STOP_TIMEOUT_MS.
   async stop({ unit }) {
-    await must('systemctl', ['stop', '--', unitOf(unit)], [0, 5]); // 5 = not loaded, already stopped
+    await must('systemctl', ['stop', '--', unitOf(unit)], [0, 5], { timeoutMs: STOP_TIMEOUT_MS }); // 5 = not loaded, already stopped
     await exec('systemctl', ['reset-failed', '--', unit]);
     console.log(`[agent] stopped ${unit}`);
   },
@@ -209,9 +211,16 @@ let delay = 2000;
 function connect() {
   const ws = new WebSocket(SERVER);
   let timer;
-  ws.onopen = async () => {
-    ws.send(JSON.stringify({ type: 'hello', machine: os.hostname(), key: KEY, stats: await withGpus() }));
-    timer = setInterval(async () => { const s = await withGpus(); if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stats', stats: s })); }, 5000);
+  ws.onopen = () => {
+    // Hello at once (the server allows 10 s); GPU stats follow with the first push.
+    ws.send(JSON.stringify({ type: 'hello', machine: os.hostname(), key: KEY, stats: stats() }));
+    let busy = false; // skip a push while the previous one is still collecting (e.g. a slow nvidia-smi)
+    timer = setInterval(async () => {
+      if (busy) return;
+      busy = true;
+      try { const s = await withGpus(); if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stats', stats: s })); }
+      finally { busy = false; }
+    }, 5000);
   };
   ws.onmessage = async (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }

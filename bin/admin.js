@@ -4,11 +4,12 @@
 //   node bin/admin.js default-user <user>        Linux user for services that don't name one
 //   node bin/admin.js machines                   list machines (enrolled with fleet-agent.js --install)
 //   node bin/admin.js remove-machine <name>      forget a machine and its key (not while it has services)
+//   node bin/admin.js backup <file>              copy the database to a new file (safe while the server runs)
 const db = require('../lib/db');
 const { hash } = require('../lib/web-auth');
 
 const [cmd, ...args] = process.argv.slice(2);
-const usage = () => { console.error(require('node:fs').readFileSync(__filename, 'utf8').split('\n').slice(1, 6).map((l) => l.slice(3)).join('\n')); process.exit(1); };
+const usage = () => { console.error(require('node:fs').readFileSync(__filename, 'utf8').split('\n').slice(1, 7).map((l) => l.slice(3)).join('\n')); process.exit(1); };
 
 try {
   db.migrate();
@@ -26,5 +27,9 @@ try {
     try { r = db.run('DELETE FROM machines WHERE name = ?', args[0]); }
     catch (e) { throw db.isForeignKey(e) ? new Error(`${args[0]} still has services: delete or move them first`) : e; }
     console.log(r.changes ? `${args[0]} removed (its agent can no longer connect)` : 'no such machine');
+  } else if (cmd === 'backup' && args[0]) {
+    if (require('node:fs').existsSync(args[0])) throw new Error(`${args[0]} already exists`);
+    db.run('VACUUM INTO ?', args[0]);
+    console.log(`database copied to ${args[0]}`);
   } else usage();
 } catch (e) { console.error(e.message); process.exit(1); }
