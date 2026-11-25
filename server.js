@@ -6,7 +6,6 @@ const db = require('./lib/db');
 const webAuth = require('./lib/web-auth');
 const services = require('./lib/services');
 const backup = require('./lib/backup');
-const fs = require('node:fs');
 
 const pub = path.join(__dirname, 'public');
 const app = express();
@@ -93,10 +92,9 @@ app.get('/api/services/:name/logs', async (req, res) => res.type('text/plain').s
 
 // Backup: the whole database as a file. Restore: replace machines, settings and services from such a file (sessions
 // are kept). Agents are then disconnected so each one is identified again against the restored machines.
-app.get('/api/backup', (req, res, next) => {
-  const f = backup.backupTemp();
+app.get('/api/backup', (req, res) => {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
-  res.download(f, `fleet-${stamp}.db`, (err) => { fs.rmSync(f, { force: true }); if (err && !res.headersSent) next(err); });
+  res.attachment(`fleet-${stamp}.db.gz`).type('application/gzip').send(backup.backupGz());
 });
 app.post('/api/restore', express.raw({ type: '*/*', limit: '200mb' }), (req, res) => {
   if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'no file' });
