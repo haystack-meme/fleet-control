@@ -43,7 +43,9 @@ click Start, and it runs there as a proper systemd service. You don't log in to 
   models or anything else every machine needs to `curl`. The browsable index has folders, sizes, dates, sorting and
   download links.
 - **Backup and restore from the browser.** Download the whole database as one file and upload it to restore.
-- **Scriptable.** Everything on the page is also a JSON API with an API key.
+- **Scriptable, and built for it.** Everything on the page is also a JSON API with an API key. Give a service a
+  health URL and `start?wait=1` answers only once it actually works, so switching a GPU from one model to another
+  is one request. Actions are safe to repeat, and errors come with stable codes.
 
 Good for home labs, AI and GPU boxes, small studios and lab clusters, wherever "a few machines and a dozen services"
 has outgrown SSH and notes but doesn't need Kubernetes.
@@ -62,8 +64,8 @@ Read this before installing.
 - **The certificate is self-signed.** Your browser will warn once. Each agent trusts the certificate it sees on its
   first install and refuses any other after that. The very first download of the agent (`curl -k`) is not checked,
   so do it on a network you trust.
-- **Services don't start at boot.** They are transient systemd units: after a machine reboots, its services stay
-  stopped until you start them from the page.
+- **Services don't start at boot.** Their unit files live in `/run`, which is emptied at every boot: after a machine
+  reboots, its services stay stopped until you start them from the page (or the API).
 - **The public file folder is public.** Anyone who can reach the server can list and download everything in
   `files/`, including over unencrypted HTTP. Only put things there you'd hand to anyone on the network. (Hidden
   files and folders, whose names start with `.`, are never served. HTML files open sandboxed, so they can't act as
@@ -150,16 +152,27 @@ two files and restart (then re-install the agents; see below).
 - **fleet-server** keeps the machines, service definitions and their full history in one SQLite file, serves the
   page and API over HTTPS, and holds one WebSocket per connected agent.
 - **fleet-agent** runs as root on every machine. It sends stats every 5 seconds and runs what the server asks.
-  It only ever manages units named `fleet-<name>.service`. Starting a service runs
-  `systemd-run --unit=fleet-<name>.service -p User=… -- /bin/bash -c <command>`.
+  It only ever manages units named `fleet-<name>.service`. Starting a service writes
+  `/run/systemd/system/fleet-<name>.service` (`ExecStart=/bin/bash -c <command>`, `User=`, environment, restart
+  policy and your extra properties, quoted so the command reaches bash exactly as written) and starts it. The file
+  is rewritten at every start, so edits take effect then, and removed when the service is deleted, renamed or moved.
+  Unlike `systemd-run`'s transient units, these can be started again while another unit's `Conflicts=` refers to
+  them, so switching between conflicting services works in both directions.
+- **Health checks:** a service can have a `health_url` (for example `http://127.0.0.1:8080/health`). The agent checks
+  it from the service's own machine whenever its status is read (any 2xx or 3xx answer within 3 s counts; HTTPS
+  certificates aren't checked). The service is **ready** when it is running and that URL answers. Without a
+  health URL, ready means systemd has it running: fleet can't know more, so set one when it matters.
 - **Enrollment:** `--install` gets a one-time code (valid 1 minute) that becomes the machine's permanent key
   (`/etc/fleet-agent/key`). The server stores only its hash.
 - **Certificate pinning:** the first `--install` saves the SHA-256 fingerprint of the server's certificate in
   `/etc/fleet-agent/server`, and from then on the agent only talks to a server presenting that certificate. If you
   replace the certificate on purpose, delete that file on each machine and run `--install` again.
-- **Stop, restart and delete** answer at once. The page shows *stopping…* / *restarting…* until the service
-  settles. A service that doesn't stop within 15 s is killed; set `TimeoutStopSec=` in its properties if it needs
-  longer.
+- **Stop, restart and delete** answer at once unless you ask them to wait (see the API). The page shows
+  *stopping…* / *restarting…* / *not ready yet* until the service settles. A service that doesn't stop within 15 s
+  is killed; set `TimeoutStopSec=` in its properties if it needs longer.
+- **One action at a time per service:** simultaneous requests for the same service run in order (two starts give
+  one start and one `"changed": false`), and while a request waits for a service, other actions on it get
+  `409 busy`.
 - **Backup file format:** gzip(database) followed by the SHA-256 of the gzip bytes. The plain database is
   `head -c -32 <file> | gunzip > fleet.db`.
 
@@ -180,7 +193,7 @@ curl -k -H "Authorization: Bearer $FLEET_API_KEY" https://<server>/api/services
 | DELETE | `/api/machines/{name}` | remove a machine and its key |
 | GET, POST | `/api/services` | list (with live status) / create |
 | GET, PUT, DELETE | `/api/services/{name}` | read / save (new version) / delete (`?force=1` if its machine is unreachable) |
-| POST | `/api/services/{name}/start`, `/stop`, `/restart` | control |
+| POST | `/api/services/{name}/start`, `/stop`, `/restart` | control (`?wait=1&timeout=<s>`, see below) |
 | GET | `/api/services/{name}/logs?lines=200` | journal |
 | GET | `/api/services/{name}/versions` | history |
 | POST | `/api/services/{name}/rollback` | `{"version": N}` |
@@ -189,6 +202,44 @@ curl -k -H "Authorization: Bearer $FLEET_API_KEY" https://<server>/api/services
 | POST | `/api/password` | `{"current": "…", "password": "…"}`: change the web password; signs out every other session |
 | GET | `/api/backup` | backup file `fleet-<UTC time>.fleetbackup` |
 | POST | `/api/restore` | body = a backup file exactly as downloaded (refused if changed): replaces machines, settings (incl. the password), services and their history; sessions are kept |
+
+**A service** (create with `POST /api/services`, change any fields with `PUT`): `name`, `machine`, `command`,
+`run_as` (required), `description`, `workdir`, `env` (`{"KEY": "value"}`), `restart` (`no` / `on-failure` /
+`always`), `properties` (`["Key=Value", …]`, extra systemd settings), `health_url`. Reading one adds its live
+`status`, `busy` (`"starting"` / `"stopping"` / `"restarting"` while a request is doing that, else `null`) and
+`last_error` (the last failed start or restart).
+
+**Status:** `{"active", "sub", "running", "ready", "pid", "since", "exit_status", "health"}`: `running` is
+systemd's view, `ready` is running and answering its `health_url`, and `health` is that check's result
+(`{"ok": true, "status": 200}` or `{"ok": false, "error": "ECONNREFUSED"}`). An unreachable machine gives
+`{"error", "code"}` instead.
+
+**Start, stop, restart** answer with the service and its status, plus `"changed"`: starting a running service or
+stopping a stopped one does nothing and answers `200` with `"changed": false`, so they are safe to repeat.
+Add `?wait=1` to answer only when it's done: **start** and **restart** once the service is **ready**, **stop** once
+it has stopped. `&timeout=<seconds>` (1–1800, default 120) limits the wait. If the service exits or crashes while
+starting, the answer is `502 start_failed`; if it isn't ready in time, `504 not_ready` (it is left running). Both
+include its recent `logs`. To switch a GPU from one service to another, give each `Conflicts=fleet-<other>.service`
+and start the one you want with `?wait=1`: systemd stops the other first, and the answer means the new one works.
+
+```sh
+curl --cacert fleet.crt -X POST -H "Authorization: Bearer $FLEET_API_KEY" \
+  "https://<server>/api/services/comfyui/start?wait=1&timeout=300"
+```
+
+**Errors** are `{"error": "<message for people>", "code": "<stable code>"}` with the HTTP status:
+
+| Status | `code` | |
+|---|---|---|
+| 400 | `invalid`, `bad_json`, `bad_backup` | a field or parameter is wrong / the body isn't JSON / the backup is damaged or not a fleet backup |
+| 401 | `unauthorized`, `wrong_password` | not signed in and no valid key / wrong password at sign-in |
+| 403 | `wrong_password`, `machine_not_approved` | wrong current password / the machine isn't approved |
+| 404 | `not_found` | no such service, machine, version or route |
+| 409 | `name_taken`, `running`, `busy`, `has_services`, `machine_removed`, `password_set` | name in use / stop it before renaming or moving / another request is changing it / the machine still has services / that version's machine was removed / someone just set the first password |
+| 413 | `too_large` | the request body is too large |
+| 502 | `machine_offline`, `agent_error`, `start_failed` | the machine's agent isn't connected (deleting then offers `can_force`) / the agent reported a failure / the service exited while starting (with `logs`) |
+| 504 | `agent_timeout`, `not_ready`, `not_stopped` | no answer from the agent / not ready before the timeout (with `logs`) / didn't stop before the timeout |
+| 500 | `internal` | a bug: see the server log |
 
 ## Tests
 
@@ -210,8 +261,6 @@ Planned fixes and ideas, roughly in order. Details for the first two are in [TOD
 
 - **CI:** a GitHub Actions workflow that runs `npm test` on every push.
 - **Harden the server's systemd unit:** sandboxing (`ProtectSystem=strict` and friends).
-- **Cap the size of restored backups** when they are decompressed.
-- **Deleting a service waits for it to stop**, so a stop that fails on the machine can't leave it running untracked.
 
 **Possible features**
 

@@ -42,7 +42,7 @@ describe('REST API', () => {
       const r = await srv.req('GET', '/'); assert.equal(r.status, 302); assert.equal(r.headers.location, '/login');
     });
     it('unknown paths are 404 JSON', async () => {
-      const r = await srv.req('GET', '/nope'); assert.equal(r.status, 404); assert.equal(r.json.error, 'not found');
+      const r = await srv.req('GET', '/nope'); assert.equal(r.status, 404); assert.equal(r.json.code, 'not_found');
     });
   });
 
@@ -57,7 +57,7 @@ describe('REST API', () => {
     it('every /api route refuses requests without a session or key (401)', async () => {
       for (const [m, p] of PROTECTED) {
         const r = await srv.req(m, p, m === 'GET' || m === 'DELETE' ? {} : { body: {} });
-        assert.equal(r.status, 401, `${m} ${p}`);
+        assert.equal(r.status, 401, `${m} ${p}`); assert.equal(r.json.code, 'unauthorized', `${m} ${p}`);
       }
     });
     it('refuses a wrong key, a wrong cookie and a malformed Authorization header', async () => {
@@ -81,7 +81,8 @@ describe('REST API', () => {
       assert.equal((await api.get('/api/api-key')).json.key, r.json.key);
     });
     it('a wrong password is refused; the session cookie is HttpOnly, Secure, SameSite=Strict', async () => {
-      assert.equal((await srv.req('POST', '/login', { body: { password: 'wrong' } })).status, 401);
+      const wrong = await srv.req('POST', '/login', { body: { password: 'wrong' } });
+      assert.equal(wrong.status, 401); assert.equal(wrong.json.code, 'wrong_password');
       assert.equal((await srv.req('POST', '/login', { body: {} })).status, 401);
       const r = await srv.req('POST', '/login', { body: { password: PW } });
       assert.match(r.headers['set-cookie'][0], /fleet_sid=[0-9a-f]{64}; Path=\/; HttpOnly; Secure; SameSite=Strict/);
@@ -94,7 +95,8 @@ describe('REST API', () => {
     });
     it('password change: needs the current one, keeps this session, signs out the others', async () => {
       const me = client(srv, { cookie: await login(srv, PW) }), other = client(srv, { cookie: await login(srv, PW) });
-      assert.equal((await me.post('/api/password', { current: 'wrong', password: 'x' })).status, 403);
+      const bad = await me.post('/api/password', { current: 'wrong', password: 'x' });
+      assert.equal(bad.status, 403); assert.equal(bad.json.code, 'wrong_password');
       assert.equal((await me.post('/api/password', { current: PW, password: '' })).status, 400);
       assert.equal((await me.post('/api/password', { current: PW, password: 'new pw' })).status, 200);
       assert.equal((await me.get('/api/machines')).status, 200);
@@ -105,7 +107,7 @@ describe('REST API', () => {
     });
     it('a bad JSON body is a 400, not a crash', async () => {
       const r = await api.req('POST', '/api/services', { body: '{not json', headers: { 'Content-Type': 'application/json' } });
-      assert.equal(r.status, 400);
+      assert.equal(r.status, 400); assert.equal(r.json.code, 'bad_json');
       assert.equal((await srv.req('GET', '/health')).status, 200);
     });
   });
@@ -169,8 +171,7 @@ describe('REST API', () => {
     });
     it('a machine with services can be neither rejected nor removed (409)', async () => {
       assert.equal((await api.post('/api/services', svcBody({ name: 'pin' }))).status, 201);
-      assert.equal((await api.post('/api/machines/box/reject')).status, 409);
-      assert.equal((await api.del('/api/machines/box')).status, 409);
+      for (const r of [await api.post('/api/machines/box/reject'), await api.del('/api/machines/box')]) { assert.equal(r.status, 409); assert.equal(r.json.code, 'has_services'); }
       assert.equal((await api.del('/api/services/pin')).status, 200);
     });
   });
@@ -189,10 +190,12 @@ describe('REST API', () => {
         svcBody({ properties: ['lower=1'] }), svcBody({ properties: ['User=root'] }), svcBody({ properties: ['ExecStart=/bin/sh'] }),
         svcBody({ properties: ['Restart=always'] }), svcBody({ properties: ['WorkingDirectory=/'] }), svcBody({ properties: ['Environment=A=1'] }),
         svcBody({ properties: ['X=a\nb'] }), svcBody({ restart: 'sometimes' }),
+        svcBody({ health_url: 'ftp://x/' }), svcBody({ health_url: 'not a url' }), svcBody({ health_url: '/health' }), svcBody({ health_url: 5 }),
+        svcBody({ health_url: 'http://a/\nb' }), svcBody({ description: 'ends with \\' }), svcBody({ workdir: '/srv\\' }), svcBody({ properties: ['Nice=5\\'] }), svcBody({ health_url: `http://a/${'x'.repeat(500)}` }),
       ];
       for (const b of bad) {
         const r = await api.post('/api/services', b);
-        assert.equal(r.status, 400, JSON.stringify(b)); assert.ok(r.json.error, JSON.stringify(b));
+        assert.equal(r.status, 400, JSON.stringify(b)); assert.ok(r.json.error, JSON.stringify(b)); assert.equal(r.json.code, 'invalid', JSON.stringify(b));
       }
       assert.equal((await api.get('/api/services')).json.length, 0, 'nothing was created');
     });
@@ -203,11 +206,14 @@ describe('REST API', () => {
       const g = (await api.get('/api/services/web')).json;
       assert.deepEqual({ name: g.name, machine: g.machine, description: g.description, command: g.command, workdir: g.workdir, run_as: g.run_as, env: g.env, restart: g.restart, properties: g.properties },
         { name: 'web', machine: 'box', description: 'test web', command: 'python3 -m http.server 8000', workdir: '/srv', run_as: 'alice', env: { PORT: '8000' }, restart: 'on-failure', properties: ['MemoryMax=1G'] });
-      assert.equal(g.status.running, false); assert.equal(g.restarting, false); assert.equal(g.last_error, null);
+      assert.equal(g.status.running, false); assert.equal(g.status.ready, false); assert.equal(g.busy, null); assert.equal(g.last_error, null); assert.equal(g.health_url, null);
       const min = (await api.post('/api/services', svcBody({ name: 'min' }))).json;
       assert.equal(min.restart, 'no'); assert.deepEqual(min.env, {}); assert.deepEqual(min.properties, []); assert.equal(min.workdir, null); assert.equal(min.description, '');
     });
-    it('duplicate name: 409', async () => assert.equal((await api.post('/api/services', svcBody())).status, 409));
+    it('duplicate name: 409 name_taken', async () => {
+      const r = await api.post('/api/services', svcBody());
+      assert.equal(r.status, 409); assert.equal(r.json.code, 'name_taken');
+    });
     it('unknown service: 404 on every route', async () => {
       for (const [m, p] of [['GET', ''], ['PUT', ''], ['DELETE', ''], ['POST', '/start'], ['POST', '/stop'], ['POST', '/restart'],
         ['GET', '/logs'], ['GET', '/versions'], ['POST', '/rollback']])
@@ -240,6 +246,7 @@ describe('REST API', () => {
       assert.equal((await api.put('/api/services/min', { name: 'web' })).status, 409);
       const r = await api.put('/api/services/min', { name: 'mini' });
       assert.equal(r.status, 200); assert.equal(r.json.unit, 'fleet-mini.service');
+      assert.deepEqual(agent.calls.at(-1), { op: 'remove', body: { unit: 'fleet-min.service' } }, 'the old unit file is removed');
       assert.equal((await api.get('/api/services/min')).status, 404);
       assert.deepEqual((await api.get('/api/services/mini/versions')).json.map((x) => x.version), [2, 1]);
     });
@@ -249,7 +256,8 @@ describe('REST API', () => {
   describe('control', () => {
     it('start: sends the full definition to the agent', async () => {
       const r = await api.post('/api/services/web/start');
-      assert.equal(r.status, 200); assert.equal(r.json.status.running, true); assert.ok(r.json.status.pid > 0);
+      assert.equal(r.status, 200); assert.equal(r.json.changed, true); assert.equal(r.json.status.running, true); assert.ok(r.json.status.pid > 0);
+      assert.equal(r.json.status.ready, true, 'no health_url: ready once running');
       const start = agent.calls.filter((c) => c.op === 'start').at(-1).body;
       assert.equal(start.unit, 'fleet-web.service');
       assert.equal(start.command, 'python3 -m http.server 8000');
@@ -258,8 +266,11 @@ describe('REST API', () => {
       assert.deepEqual(start.properties, ['User=alice', 'Restart=on-failure', 'RestartSec=2', 'TimeoutStopSec=15', 'MemoryMax=1G', 'WorkingDirectory=/srv']);
       assert.match((await api.get('/api/services/web')).json.status.since, /^\d{4}-\d\d-\d\dT/);
     });
-    it('start while running: 409; own RestartSec/TimeoutStopSec win over the defaults', async () => {
-      assert.equal((await api.post('/api/services/web/start')).status, 409);
+    it('start while running: 200 changed: false, nothing sent; own RestartSec/TimeoutStopSec win over the defaults', async () => {
+      const starts = agent.calls.filter((c) => c.op === 'start').length;
+      const again = await api.post('/api/services/web/start');
+      assert.equal(again.status, 200); assert.equal(again.json.changed, false); assert.equal(again.json.status.running, true);
+      assert.equal(agent.calls.filter((c) => c.op === 'start').length, starts);
       await api.put('/api/services/mini', { properties: ['TimeoutStopSec=90', 'RestartSec=7'], restart: 'always' });
       await api.post('/api/services/mini/start');
       const p = agent.calls.filter((c) => c.op === 'start').at(-1).body.properties;
@@ -274,23 +285,28 @@ describe('REST API', () => {
       assert.equal((await api.put('/api/services/web', { name: 'web2' })).status, 409);
       assert.equal((await api.put('/api/services/web', { description: 'fine while running' })).status, 200);
     });
-    it('stop answers without waiting (wait: false)', async () => {
+    it('stop answers without waiting (wait: false); stopping a stopped service is changed: false', async () => {
       const r = await api.post('/api/services/web/stop');
-      assert.equal(r.status, 200);
+      assert.equal(r.status, 200); assert.equal(r.json.changed, true);
       assert.deepEqual(agent.calls.filter((c) => c.op === 'stop').at(-1).body, { unit: 'fleet-web.service', wait: false });
       assert.equal((await status('web')).running, false);
+      const stops = agent.calls.filter((c) => c.op === 'stop').length;
+      const again = await api.post('/api/services/web/stop');
+      assert.equal(again.json.changed, false); assert.equal(agent.calls.filter((c) => c.op === 'stop').length, stops);
     });
-    it('restart: answers at once, restarting: true meanwhile (other actions 409), then runs the current definition', async () => {
+    it('restart: answers at once, busy: restarting meanwhile (other actions 409 busy), then runs the current definition', async () => {
       await api.post('/api/services/web/start');
       await api.put('/api/services/web', { command: 'echo restarted' });
       let release; agent.hold = { stop: new Promise((r) => { release = r; }) };
       const r = await api.post('/api/services/web/restart');
-      assert.equal(r.status, 200); assert.equal(r.json.restarting, true);
-      for (const [m, p, b] of [['POST', '/start'], ['POST', '/stop'], ['POST', '/restart'], ['PUT', '', { description: 'x' }], ['DELETE', '']])
-        assert.equal((await api.req(m, `/api/services/web${p}`, { body: b })).status, 409, `${m} ${p} during restart`);
-      assert.equal((await api.get('/api/services')).json.find((s) => s.name === 'web').restarting, true);
+      assert.equal(r.status, 200); assert.equal(r.json.busy, 'restarting'); assert.equal(r.json.changed, true);
+      for (const [m, p, b] of [['POST', '/start'], ['POST', '/stop'], ['POST', '/restart'], ['PUT', '', { description: 'x' }], ['DELETE', '']]) {
+        const x = await api.req(m, `/api/services/web${p}`, { body: b });
+        assert.equal(x.status, 409, `${m} ${p} during restart`); assert.equal(x.json.code, 'busy');
+      }
+      assert.equal((await api.get('/api/services')).json.find((s) => s.name === 'web').busy, 'restarting');
       release(); agent.hold = null;
-      await until(async () => !(await api.get('/api/services/web')).json.restarting, { what: 'restart to finish' });
+      await until(async () => !(await api.get('/api/services/web')).json.busy, { what: 'restart to finish' });
       const g = (await api.get('/api/services/web')).json;
       assert.equal(g.status.running, true); assert.equal(g.last_error, null);
       assert.deepEqual(agent.calls.filter((c) => c.op === 'stop').at(-1).body, { unit: 'fleet-web.service', wait: true });
@@ -299,20 +315,27 @@ describe('REST API', () => {
     it('a failed restart is reported in last_error until the next action', async () => {
       agent.failNext.start = 'systemd-run failed: boom';
       await api.post('/api/services/web/restart');
-      const g = await until(async () => { const s = (await api.get('/api/services/web')).json; return !s.restarting && s; }, { what: 'restart' });
+      const g = await until(async () => { const s = (await api.get('/api/services/web')).json; return !s.busy && s; }, { what: 'restart' });
       assert.match(g.last_error.message, /restart failed: box: systemd-run failed: boom/);
-      assert.equal((await api.post('/api/services/web/start')).status, 200);
+      const st = await api.post('/api/services/web/start');
+      assert.equal(st.status, 200); assert.equal(st.json.changed, true);
       assert.equal((await api.get('/api/services/web')).json.last_error, null);
     });
     it('agent errors come back as 502 with the reason', async () => {
       agent.failNext.logs = 'journalctl failed: nope';
       const r = await api.get('/api/services/web/logs');
-      assert.equal(r.status, 502); assert.equal(r.json.error, 'box: journalctl failed: nope');
+      assert.equal(r.status, 502); assert.equal(r.json.error, 'box: journalctl failed: nope'); assert.equal(r.json.code, 'agent_error');
     });
-    it('delete stops it on its machine first', async () => {
+    it('delete stops it on its machine first, waiting for that, then removes its unit file', async () => {
+      let done; agent.hold = { stop: new Promise((r) => { done = r; }) };
+      setTimeout(() => done(), 500);
+      const t0 = Date.now();
       assert.equal((await api.del('/api/services/web')).status, 200);
-      assert.deepEqual(agent.calls.filter((c) => c.op === 'stop').at(-1).body, { unit: 'fleet-web.service', wait: false });
-      assert.equal(agent.units.get('fleet-web.service').active, 'inactive');
+      agent.hold = null;
+      assert.ok(Date.now() - t0 >= 400, 'waited for the stop');
+      assert.deepEqual(agent.calls.filter((c) => c.op === 'stop').at(-1).body, { unit: 'fleet-web.service', wait: true });
+      assert.deepEqual(agent.calls.at(-1), { op: 'remove', body: { unit: 'fleet-web.service' } }, 'then its unit file is removed');
+      assert.equal(agent.units.has('fleet-web.service'), false);
       assert.equal((await api.get('/api/services/web/versions')).status, 404, 'history goes with it');
     });
   });
@@ -330,7 +353,10 @@ describe('REST API', () => {
     it('shows offline; status, start, stop, restart and logs are 502', async () => {
       assert.match((await api.get('/api/services')).json.find((s) => s.name === 'remote').status.error, /agent not connected/);
       assert.match((await api.get('/api/services/remote')).json.status.error, /agent not connected/);
-      for (const a of ['start', 'stop', 'restart']) assert.equal((await api.post(`/api/services/remote/${a}`)).status, 502, a);
+      for (const a of ['start', 'stop', 'restart']) {
+        const r = await api.post(`/api/services/remote/${a}`);
+        assert.equal(r.status, 502, a); assert.equal(r.json.code, 'machine_offline', a);
+      }
       assert.equal((await api.get('/api/services/remote/logs')).status, 502);
     });
     it('rename and move are allowed (nothing can be running that we know of)', async () => {
@@ -340,7 +366,7 @@ describe('REST API', () => {
     });
     it('delete is refused with can_force; ?force=1 deletes from the database only', async () => {
       const r = await api.del('/api/services/remote');
-      assert.equal(r.status, 502); assert.equal(r.json.can_force, true);
+      assert.equal(r.status, 502); assert.equal(r.json.can_force, true); assert.equal(r.json.code, 'machine_offline');
       assert.equal((await api.req('DELETE', '/api/services/remote?force=1')).status, 200);
       assert.equal((await api.get('/api/services/remote')).status, 404);
       assert.equal((await api.del('/api/machines/offbox')).status, 200);
@@ -373,13 +399,18 @@ describe('REST API', () => {
       const up = (b) => api.req('POST', '/api/restore', { body: b, headers: { 'Content-Type': 'application/octet-stream' } });
       assert.equal((await up(Buffer.alloc(0))).status, 400);
       const flipped = Buffer.from(backup); flipped[20] ^= 1;
-      assert.match((await up(flipped)).json.error, /checksum/);
+      const f = await up(flipped);
+      assert.match(f.json.error, /checksum/); assert.equal(f.json.code, 'bad_backup');
       assert.equal((await up(backup.subarray(0, backup.length - 1))).status, 400);
       assert.equal((await up(Buffer.from('hello world, definitely not a backup file'))).status, 400);
       // A valid wrapper around something that isn't a fleet database.
       const zlib = require('node:zlib'), crypto = require('node:crypto');
       const gz = zlib.gzipSync(Buffer.from('not sqlite')); const fake = Buffer.concat([gz, crypto.createHash('sha256').update(gz).digest()]);
       assert.equal((await up(fake)).status, 400);
+      // A valid wrapper around something that unpacks to more than 1 GB (a gzip bomb): refused without unpacking it all.
+      const bomb = zlib.gzipSync(Buffer.alloc(2 ** 30 + 1), { level: 9 });
+      const r = await up(Buffer.concat([bomb, crypto.createHash('sha256').update(bomb).digest()]));
+      assert.equal(r.status, 400); assert.match(r.json.error, /more than 1 GB/);
     });
     it('restore: replaces services, machines and settings; keeps sessions; agents reconnect', async () => {
       await api.post('/api/services', svcBody({ name: 'after-backup' }));
@@ -393,6 +424,135 @@ describe('REST API', () => {
       await until(() => agent.welcomed > welcomes, { what: 'agent to reconnect' });
       assert.equal((await api.get('/api/machines')).json.find((m) => m.name === 'box').online, true);
     });
+  });
+
+  // ---------------------------------------------------------------------------------------------------------------
+  describe('health checks, waiting, repeat-safe actions', () => {
+    const URL_OK = 'http://127.0.0.1:7000/health';
+    const t = () => Date.now();
+    const lastStop = () => agent.calls.filter((c) => c.op === 'stop').at(-1).body;
+    before(async () => {
+      await api.post('/api/services', svcBody({ name: 'model', command: 'serve-model', health_url: URL_OK }));
+    });
+
+    it('running but not answering its health URL: ready false, with the reason', async () => {
+      const r = await api.post('/api/services/model/start');
+      assert.equal(r.json.status.running, true); assert.equal(r.json.status.ready, false);
+      assert.deepEqual(r.json.status.health, { ok: false, error: 'connect ECONNREFUSED' });
+      assert.deepEqual(agent.calls.filter((c) => c.op === 'probe').at(-1).body, { urls: [URL_OK], timeout_ms: 3000 });
+      agent.health.set(URL_OK, { ok: true, status: 200 });
+      const g = (await api.get('/api/services/model')).json.status;
+      assert.equal(g.ready, true); assert.deepEqual(g.health, { ok: true, status: 200 });
+      assert.equal((await api.get('/api/services')).json.find((x) => x.name === 'model').status.ready, true, 'the list probes too');
+    });
+    it('a stopped service is not probed and not ready', async () => {
+      await api.post('/api/services/model/stop?wait=1');
+      const probes = agent.calls.filter((c) => c.op === 'probe').length;
+      const g = (await api.get('/api/services/model')).json.status;
+      assert.equal(g.ready, false); assert.equal(g.health, undefined);
+      assert.equal(agent.calls.filter((c) => c.op === 'probe').length, probes);
+    });
+    it('start?wait=1 answers only once the health URL answers', async () => {
+      agent.health.delete(URL_OK);
+      setTimeout(() => agent.health.set(URL_OK, { ok: true, status: 200 }), 1500);
+      const t0 = t();
+      const r = await api.post('/api/services/model/start?wait=1');
+      assert.equal(r.status, 200, r.text);
+      assert.ok(t() - t0 >= 1400, `waited ${t() - t0} ms`);
+      assert.equal(r.json.changed, true); assert.equal(r.json.status.ready, true); assert.equal(r.json.busy, null);
+    });
+    it('start?wait=1 on a ready service answers at once with changed: false', async () => {
+      const t0 = t();
+      const r = await api.post('/api/services/model/start?wait=1');
+      assert.equal(r.json.changed, false); assert.equal(r.json.status.ready, true); assert.ok(t() - t0 < 1000);
+    });
+    it('while a request waits, the service is busy: other actions get 409 busy, the page sees busy: starting', async () => {
+      await api.post('/api/services/model/stop?wait=1');
+      agent.health.delete(URL_OK);
+      const waiting = api.post('/api/services/model/start?wait=1&timeout=20');
+      await until(async () => (await api.get('/api/services/model')).json.busy === 'starting', { what: 'busy' });
+      for (const [m, p] of [['POST', '/stop'], ['POST', '/start'], ['POST', '/restart'], ['DELETE', '']]) {
+        const r = await api.req(m, `/api/services/model${p}`, { body: m === 'POST' ? {} : undefined });
+        assert.equal(r.status, 409, `${m} ${p}`); assert.equal(r.json.code, 'busy');
+      }
+      agent.health.set(URL_OK, { ok: true, status: 200 });
+      assert.equal((await waiting).status, 200);
+      assert.equal((await api.get('/api/services/model')).json.busy, null);
+    });
+    it('start?wait=1 that never gets ready: 504 not_ready with the reason and recent logs; kept in last_error', async () => {
+      await api.post('/api/services/model/stop?wait=1');
+      agent.health.set(URL_OK, { ok: false, status: 503 });
+      const t0 = t();
+      const r = await api.post('/api/services/model/start?wait=1&timeout=2');
+      assert.equal(r.status, 504); assert.equal(r.json.code, 'not_ready');
+      assert.ok(t() - t0 >= 1900 && t() - t0 < 5000, `took ${t() - t0} ms`);
+      assert.match(r.json.error, /did not become ready within 2 s: http:\/\/127\.0\.0\.1:7000\/health answered 503/);
+      assert.equal(r.json.logs, 'log of fleet-model.service (lines=30)\n');
+      assert.match((await api.get('/api/services/model')).json.last_error.message, /did not become ready/);
+      assert.equal((await status('model')).running, true, 'it is left running (it may still come up)');
+    });
+    it('start?wait=1 of a service that crashes while starting: 502 start_failed with the exit status and logs', async () => {
+      await api.post('/api/services', svcBody({ name: 'crashy', command: 'false', health_url: 'http://127.0.0.1:7001/' }));
+      agent.crashOnStart.add('fleet-crashy.service');
+      const r = await api.post('/api/services/crashy/start?wait=1&timeout=10');
+      assert.equal(r.status, 502); assert.equal(r.json.code, 'start_failed');
+      assert.equal(r.json.error, 'crashy failed (exit status 3)'); assert.match(r.json.logs, /fleet-crashy/);
+      await api.del('/api/services/crashy');
+    });
+    it('stop?wait=1 waits for the agent to finish stopping; again: changed: false', async () => {
+      await api.post('/api/services/model/stop?wait=1'); // from the not_ready test
+      agent.health.set(URL_OK, { ok: true, status: 200 });
+      await api.post('/api/services/model/start?wait=1');
+      let done; agent.hold = { stop: new Promise((r) => { done = r; }) };
+      setTimeout(() => done(), 800);
+      const t0 = t();
+      const r = await api.post('/api/services/model/stop?wait=1');
+      agent.hold = null;
+      assert.ok(t() - t0 >= 700, 'waited for the agent');
+      assert.equal(r.json.changed, true); assert.equal(r.json.status.running, false); assert.deepEqual(lastStop(), { unit: 'fleet-model.service', wait: true });
+      assert.equal((await api.post('/api/services/model/stop?wait=1')).json.changed, false);
+    });
+    it('restart?wait=1 answers once the restarted service is ready, with the new definition', async () => {
+      await api.post('/api/services/model/start?wait=1');
+      await api.put('/api/services/model', { command: 'serve-model --v2' });
+      agent.health.delete(URL_OK);
+      setTimeout(() => agent.health.set(URL_OK, { ok: true, status: 200 }), 1200);
+      const r = await api.post('/api/services/model/restart?wait=1');
+      assert.equal(r.status, 200, r.text); assert.equal(r.json.status.ready, true); assert.equal(r.json.busy, null);
+      assert.equal(agent.calls.filter((c) => c.op === 'start').at(-1).body.command, 'serve-model --v2');
+    });
+    it('simultaneous starts: one start, the others changed: false (never a systemd error)', async () => {
+      await api.post('/api/services/model/stop?wait=1');
+      const starts = agent.calls.filter((c) => c.op === 'start').length;
+      const rs = await Promise.all([1, 2, 3, 4].map(() => api.post('/api/services/model/start')));
+      assert.deepEqual(rs.map((r) => r.status), [200, 200, 200, 200]);
+      assert.equal(rs.filter((r) => r.json.changed).length, 1);
+      assert.equal(agent.calls.filter((c) => c.op === 'start').length, starts + 1);
+    });
+    it('bad wait / timeout parameters: 400 invalid', async () => {
+      for (const q of ['wait=yes', 'wait=1&timeout=0', 'wait=1&timeout=1801', 'wait=1&timeout=1.5', 'wait=1&timeout=abc']) {
+        const r = await api.post(`/api/services/model/start?${q}`);
+        assert.equal(r.status, 400, q); assert.equal(r.json.code, 'invalid', q);
+      }
+    });
+    it('health_url can be changed and cleared; it is versioned', async () => {
+      assert.equal((await api.put('/api/services/model', { health_url: 'https://127.0.0.1:7443/ready' })).json.health_url, 'https://127.0.0.1:7443/ready');
+      assert.equal((await api.put('/api/services/model', { health_url: '' })).json.health_url, null);
+      const v = (await api.get('/api/services/model/versions')).json;
+      assert.deepEqual(v.slice(0, 3).map((x) => x.health_url), [null, 'https://127.0.0.1:7443/ready', URL_OK]);
+      assert.equal((await api.get('/api/services/model')).json.status.ready, true, 'no health_url: ready when running');
+    });
+    it('an agent from before health checks: a clear error instead of a probe it cannot do', async () => {
+      const old = await newAgent('oldbox', { ops: null });
+      await api.post('/api/machines/oldbox/approve');
+      await api.post('/api/services', svcBody({ name: 'legacy', machine: 'oldbox', health_url: URL_OK }));
+      const r = await api.post('/api/services/legacy/start');
+      assert.equal(r.json.status.ready, false);
+      assert.match(r.json.status.health.error, /fleet-agent on oldbox is too old for health checks/);
+      assert.ok(!old.calls.some((c) => c.op === 'probe'));
+      await api.del('/api/services/legacy'); old.close(); await api.del('/api/machines/oldbox');
+    });
+    after(async () => { agent.health.clear(); await api.del('/api/services/model'); });
   });
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -438,5 +598,64 @@ describe('first start', () => {
   it('an API key exists from the start', async () => {
     const c = client(srv, { cookie: await login(srv, (await srv.req('POST', '/login', { body: { password: 'one' } })).status === 200 ? 'one' : 'two') });
     assert.match((await c.get('/api/api-key')).json.key, /^[0-9a-f]{64}$/);
+  });
+});
+
+// Databases and backups from before health checks are upgraded in place.
+describe('upgrades', () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const zlib = require('node:zlib'), crypto = require('node:crypto'), os = require('node:os');
+  // The schema of the first release (no health_url), with one machine and one service.
+  function oldDatabase(file) {
+    const d = new DatabaseSync(file);
+    d.exec(`CREATE TABLE machines (id INTEGER PRIMARY KEY AUTOINCREMENT, key_sha256 TEXT UNIQUE, name TEXT UNIQUE, address TEXT,
+        status TEXT NOT NULL DEFAULT 'pending', sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT 'x', activated_at TEXT, decided_at TEXT);
+      CREATE TABLE settings (name TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE sessions (id_hash TEXT PRIMARY KEY, ip TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT 'x', last_seen_at TEXT NOT NULL DEFAULT 'x');
+      CREATE TABLE services (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, version INTEGER NOT NULL DEFAULT 1,
+        machine_id INTEGER NOT NULL REFERENCES machines (id), description TEXT NOT NULL DEFAULT '', command TEXT NOT NULL, workdir TEXT,
+        run_as TEXT NOT NULL, env TEXT, restart TEXT NOT NULL DEFAULT 'no', properties TEXT, created_at TEXT NOT NULL DEFAULT 'x', updated_at TEXT NOT NULL DEFAULT 'x');
+      CREATE TABLE service_versions (service_id INTEGER NOT NULL REFERENCES services (id) ON DELETE CASCADE, version INTEGER NOT NULL,
+        name TEXT NOT NULL, machine_id INTEGER NOT NULL, description TEXT NOT NULL DEFAULT '', command TEXT NOT NULL, workdir TEXT,
+        run_as TEXT NOT NULL, env TEXT, restart TEXT NOT NULL, properties TEXT, rolled_back_from INTEGER, created_at TEXT NOT NULL DEFAULT 'x',
+        PRIMARY KEY (service_id, version));
+      INSERT INTO machines (key_sha256, name, status, activated_at) VALUES ('k', 'oldbox', 'approved', '2026-01-01T00:00:00Z');
+      INSERT INTO services (name, machine_id, command, run_as, env, properties) VALUES ('legacy', 1, 'run-it', 'alice', '{}', '[]');
+      INSERT INTO service_versions (service_id, version, name, machine_id, command, run_as, env, restart, properties) VALUES (1, 1, 'legacy', 1, 'run-it', 'alice', '{}', 'no', '[]');`);
+    d.close();
+  }
+  it('the server upgrades an old database on start, keeping its data', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-old-'));
+    fs.mkdirSync(path.join(dir, 'data'));
+    oldDatabase(path.join(dir, 'data', 'fleet.db'));
+    const srv = await startServer({ FLEET_DATA_DIR: path.join(dir, 'data') });
+    try {
+      const c = client(srv, { cookie: await login(srv, PW) });
+      const g = (await c.get('/api/services/legacy')).json;
+      assert.equal(g.command, 'run-it'); assert.equal(g.health_url, null);
+      assert.equal((await c.put('/api/services/legacy', { health_url: 'http://127.0.0.1:1/h' })).json.health_url, 'http://127.0.0.1:1/h');
+      assert.deepEqual((await c.get('/api/services/legacy/versions')).json.map((v) => v.health_url), ['http://127.0.0.1:1/h', null]);
+    } finally { await srv.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('a backup from before health checks restores; any other SQLite file is refused and changes nothing', async () => {
+    const srv = await startServer();
+    try {
+      const c = client(srv, { cookie: await login(srv, PW) });
+      const wrap = (file) => { const gz = zlib.gzipSync(fs.readFileSync(file)); return Buffer.concat([gz, crypto.createHash('sha256').update(gz).digest()]); };
+      const up = (buf) => c.req('POST', '/api/restore', { body: buf, headers: { 'Content-Type': 'application/octet-stream' } });
+
+      const other = path.join(srv.dir, 'other.db');
+      const d = new DatabaseSync(other); d.exec('CREATE TABLE notes (t TEXT); INSERT INTO notes VALUES (1);'); d.close();
+      const r1 = await up(wrap(other));
+      assert.equal(r1.status, 400); assert.equal(r1.json.code, 'bad_backup'); assert.match(r1.json.error, /no machines table/);
+      assert.equal((await c.get('/api/machines')).json.length, 0, 'nothing was changed');
+
+      const old = path.join(srv.dir, 'old.db');
+      oldDatabase(old);
+      const r2 = await up(wrap(old));
+      assert.equal(r2.status, 200, r2.text); assert.deepEqual([r2.json.machines, r2.json.services], [1, 1]);
+      const g = (await c.get('/api/services/legacy')).json;
+      assert.equal(g.command, 'run-it'); assert.equal(g.health_url, null); assert.equal(g.machine, 'oldbox');
+    } finally { await srv.stop(); }
   });
 });

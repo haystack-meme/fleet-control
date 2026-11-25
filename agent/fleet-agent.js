@@ -15,8 +15,8 @@
 // --server is the server's IPv4 address, with :<port> if its HTTPS port isn't 443 (e.g. 192.0.2.10:8443).
 //
 // In --run mode it listens on nothing: it keeps one WebSocket open to the server, says hello with its key + hostname
-// (the server identifies the machine by the key), pushes system + GPU stats every 5 s and runs the commands the server
-// sends. It runs as root and only manages units named fleet-<name>.service.
+// (the server identifies the machine by the key) and the ops it supports, pushes system + GPU stats every 5 s and runs
+// the commands the server sends (show / start / stop / logs, and probe: the services' health checks, from this machine). It runs as root and only manages units named fleet-<name>.service.
 //
 // The server's certificate is self-signed, so it isn't checked against any authority. Instead the agent is pinned to
 // its server: the first --install saves the SHA-256 fingerprint of the certificate the server presents
@@ -27,6 +27,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const tls = require('node:tls');
 const http = require('node:http');
+const https = require('node:https');
 const crypto = require('node:crypto');
 const EventEmitter = require('node:events');
 const { execFile, execFileSync } = require('node:child_process');
@@ -277,6 +278,57 @@ async function must(cmd, args, okCodes = [0], opts) {
 // fleet-agent.service (this agent) and fleet-server.service (the server) are never managed units.
 const unitOf = (u) => (UNIT.test(u || '') && !['fleet-agent.service', 'fleet-server.service'].includes(u) ? u : fail('unit must be fleet-<name>.service'));
 
+// ---- unit files ----
+// Each service is a unit file in /run/systemd/system: /run is emptied at every boot, so nothing starts at boot and
+// nothing is left behind, and unlike transient units (systemd-run) a stopped unit can always be started again, even
+// while another unit's Conflicts= refers to it. The file is rewritten at every start, so edits take effect then.
+const UNIT_DIR = '/run/systemd/system';
+const unitPath = (unit) => `${UNIT_DIR}/${unit}`;
+function writeUnit(unit, text) {
+  fs.mkdirSync(UNIT_DIR, { recursive: true });
+  const tmp = `${unitPath(unit)}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, text, { mode: 0o644 });
+  fs.renameSync(tmp, unitPath(unit)); // atomic: systemd never reads a half-written file
+}
+// Settings that belong in [Unit] (systemd.unit(5)); everything else goes in [Service] (service, exec, kill and
+// resource-control settings).
+const UNIT_SECTION = new Set(['Description', 'Documentation', 'Wants', 'Requires', 'Requisite', 'BindsTo', 'PartOf', 'Upholds',
+  'Conflicts', 'Before', 'After', 'OnFailure', 'OnSuccess', 'PropagatesReloadTo', 'ReloadPropagatedFrom', 'PropagatesStopTo',
+  'StopPropagatedFrom', 'JoinsNamespaceOf', 'RequiresMountsFor', 'WantsMountsFor', 'OnFailureJobMode', 'IgnoreOnIsolate',
+  'StopWhenUnneeded', 'RefuseManualStart', 'RefuseManualStop', 'AllowIsolate', 'DefaultDependencies', 'SurviveFinalKillSignal',
+  'CollectMode', 'FailureAction', 'SuccessAction', 'FailureActionExitStatus', 'SuccessActionExitStatus', 'JobTimeoutSec',
+  'JobRunningTimeoutSec', 'JobTimeoutAction', 'JobTimeoutRebootArgument', 'StartLimitIntervalSec', 'StartLimitBurst',
+  'StartLimitAction', 'RebootArgument', 'SourcePath']);
+const inUnitSection = (key) => UNIT_SECTION.has(key) || /^(Condition|Assert)[A-Z]/.test(key);
+// Values are written literally: "%" (specifiers) is doubled everywhere. Quoted words (the command, environment values)
+// use systemd's quoting with C escapes, so newlines, quotes and backslashes survive; in the command "$" is doubled too,
+// so bash (not systemd) expands variables. Single-line values must not end with a backslash (line continuation); the
+// server refuses those.
+const literal = (s) => s.replaceAll('%', '%%');
+function quoted(s, { dollars = false } = {}) {
+  let out = '"';
+  for (const ch of s) {
+    const c = ch.codePointAt(0);
+    if (ch === '\\') out += '\\\\';
+    else if (ch === '"') out += '\\"';
+    else if (ch === '%') out += '%%';
+    else if (ch === '$' && dollars) out += '$$';
+    else if (ch === '\n') out += '\\n';
+    else if (ch === '\t') out += '\\t';
+    else if (c < 0x20 || c === 0x7f) out += `\\x${c.toString(16).padStart(2, '0')}`;
+    else out += ch;
+  }
+  return out + '"';
+}
+function unitFile({ description, properties, env, command }) {
+  const unit = [`Description=${literal(description)}`], service = ['Type=exec'];
+  for (const p of properties) (inUnitSection(p.slice(0, p.indexOf('='))) ? unit : service).push(literal(p));
+  for (const [k, v] of Object.entries(env)) service.push(`Environment=${quoted(`${k}=${v}`)}`);
+  service.push(`ExecStart=/bin/bash -c ${quoted(command, { dollars: true })}`);
+  return `# Written by fleet-agent at each start; removed with the service. In /run, so it is gone after a reboot.\n` +
+    `[Unit]\n${unit.join('\n')}\n\n[Service]\n${service.join('\n')}\n`;
+}
+
 // ---- stats: CPU % over the last 5 s; the rest is read when sent ----
 const readCpu = () => {
   const f = fs.readFileSync('/proc/stat', 'utf8').split('\n')[0].trim().split(/\s+/).slice(1, 9).map(Number);
@@ -344,19 +396,33 @@ const ops = {
     return r.stdout.trim().split(/\n\s*\n/).map((b) =>
       Object.fromEntries(b.split('\n').map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)])));
   },
-  // {unit, description, properties: ["User=www-data", ...], env: {K: "v"}, command}
+  // {unit, description, properties: ["User=www-data", ...], env: {K: "v"}, command}: writes the unit file (see
+  // unitFile), makes systemd read it and starts it. `systemctl start` returns once it has started (Type=exec: the
+  // command was executed), after stopping any unit it Conflicts= with, which can take that unit's TimeoutStopSec.
   async start({ unit, description = '', properties = [], env = {}, command }) {
     unitOf(unit);
-    if (!oneLine(description)) fail('bad description');
-    if (!Array.isArray(properties) || !properties.every((p) => oneLine(p) && /^[A-Z][A-Za-z]{1,63}=/.test(p))) fail('bad properties');
+    if (!oneLine(description) || description.endsWith('\\')) fail('bad description');
+    if (!Array.isArray(properties) || !properties.every((p) => oneLine(p) && /^[A-Z][A-Za-z]{1,63}=/.test(p) && !p.endsWith('\\'))) fail('bad properties');
     if (!env || typeof env !== 'object' || !Object.entries(env).every(([k, v]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && oneLine(v))) fail('bad env');
     if (typeof command !== 'string' || !command.trim() || command.includes('\0')) fail('command required');
-    await exec('systemctl', ['reset-failed', '--', unit]); // clear a failed leftover; errors are fine
-    const args = ['--quiet', `--unit=${unit}`, `--description=${description}`];
-    for (const p of properties) args.push('-p', p);
-    for (const [k, v] of Object.entries(env)) args.push(`--setenv=${k}=${v}`);
-    await must('systemd-run', [...args, '--', '/bin/bash', '-c', command]);
+    writeUnit(unit, unitFile({ description, properties, env, command }));
+    await must('systemctl', ['daemon-reload']);
+    // A transient unit of the same name (made by agents before unit files) shadows the file until systemd drops it.
+    const fragment = (await must('systemctl', ['show', '-p', 'FragmentPath', '--value', '--', unit])).stdout.trim();
+    if (fragment !== unitPath(unit))
+      fail(`${unit} is still loaded from ${fragment || 'elsewhere'} (left by an older fleet-agent, kept loaded because a running ` +
+        'service refers to it, e.g. with Conflicts=): stop that service, then start this one again');
+    await exec('systemctl', ['reset-failed', '--', unit]); // a failed previous run; errors are fine
+    await must('systemctl', ['start', '--', unit], [0], { timeoutMs: STOP_TIMEOUT_MS });
     console.log(`[agent] started ${unit}`);
+  },
+  // Deletes the unit file of a deleted / renamed / moved service (it has been stopped, or is stopping).
+  async remove({ unit }) {
+    unitOf(unit);
+    fs.rmSync(unitPath(unit), { force: true });
+    await must('systemctl', ['daemon-reload']);
+    await exec('systemctl', ['reset-failed', '--', unit]);
+    console.log(`[agent] removed ${unit}`);
   },
   // wait (default): returns once the unit has stopped (it takes up to its TimeoutStopSec), at most STOP_TIMEOUT_MS.
   // wait: false: returns at once; the stop goes on here (the unit shows as deactivating until it is done).
@@ -374,7 +440,30 @@ const ops = {
     const n = Math.min(Math.max(parseInt(lines, 10) || 200, 1), 5000);
     return (await must('journalctl', ['-u', unitOf(unit), '-n', String(n), '--no-pager', '-o', 'short-iso'])).stdout;
   },
+  // Health checks: GET each URL from this machine, in parallel. [{ ok, status } | { ok: false, error }] in order.
+  async probe({ urls, timeout_ms: timeoutMs = 3000 }) {
+    if (!Array.isArray(urls) || !urls.length || urls.length > 100) fail('urls required');
+    const t = Math.min(Math.max(Number(timeoutMs) || 3000, 100), 30000);
+    return Promise.all(urls.map((u) => probeUrl(u, t)));
+  },
 };
+// One health check: a GET that counts as answering with any 2xx or 3xx status (redirects are not followed). For
+// https the certificate isn't checked: this asks "does the service answer?", not "is it who it claims to be?" (it is
+// typically a local service with a self-signed certificate).
+function probeUrl(url, timeoutMs) {
+  let u;
+  try { u = new URL(url); } catch { return { ok: false, error: 'not a URL' }; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return { ok: false, error: 'not an http(s) URL' };
+  return new Promise((resolve) => {
+    const lib = u.protocol === 'https:' ? https : http;
+    const req = lib.get(u, { timeout: timeoutMs, rejectUnauthorized: false, headers: { 'User-Agent': 'fleet-agent health check' } }, (res) => {
+      res.resume(); // the body isn't needed
+      resolve({ ok: res.statusCode >= 200 && res.statusCode < 400, status: res.statusCode });
+    });
+    req.on('timeout', () => req.destroy(new Error(`no answer within ${timeoutMs} ms`)));
+    req.on('error', (e) => resolve({ ok: false, error: e.code ? `${e.code}${e.message.includes(e.code) ? '' : `: ${e.message}`}` : e.message }));
+  });
+}
 
 // ---- connection to the server: reconnects forever (2 s, doubling up to 30 s) ----
 let delay = 2000;
@@ -387,7 +476,7 @@ async function connect() {
   let ws;
   try { ws = await wsConnect(); } catch (e) { return retry(`could not connect (${e.message})`); }
   // Hello at once (the server allows 10 s); GPU stats follow with the first push.
-  ws.send(JSON.stringify({ type: 'hello', machine: os.hostname(), key: KEY, stats: stats() }));
+  ws.send(JSON.stringify({ type: 'hello', machine: os.hostname(), key: KEY, stats: stats(), ops: Object.keys(ops) }));
   let busy = false; // skip a push while the previous one is still collecting (e.g. a slow nvidia-smi)
   const timer = setInterval(async () => {
     if (busy) return;

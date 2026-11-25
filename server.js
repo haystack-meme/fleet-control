@@ -14,6 +14,7 @@ const db = require('./lib/db');
 const webAuth = require('./lib/web-auth');
 const services = require('./lib/services');
 const backup = require('./lib/backup');
+const { ApiError } = require('./lib/errors');
 
 const pub = path.join(__dirname, 'public');
 const app = express();
@@ -48,7 +49,7 @@ app.post('/logout', webAuth.logout);
 app.get('/', (req, res) => webAuth.valid(req) ? res.sendFile(path.join(pub, 'index.html')) : res.redirect(302, '/login'));
 
 // API: needs a signed-in web session or the API key.
-app.use('/api', (req, res, next) => (webAuth.valid(req) || webAuth.validKey(req) ? next() : res.status(401).json({ error: 'sign in first (or send the API key)' })));
+app.use('/api', (req, res, next) => (webAuth.valid(req) || webAuth.validKey(req) ? next() : next(new ApiError(401, 'unauthorized', 'sign in first (or send the API key)'))));
 
 // The API key: show it, or replace it (the old one stops working at once).
 app.get('/api/api-key', (req, res) => res.json({ key: webAuth.apiKey() }));
@@ -79,10 +80,10 @@ for (const [action, status] of [['approve', 'approved'], ['reject', 'rejected']]
   app.post(`/api/machines/:name/${action}`, (req, res) => {
     if (status === 'rejected') {
       const { n } = db.get('SELECT COUNT(*) AS n FROM services s JOIN machines m ON m.id = s.machine_id WHERE m.name = ?', req.params.name);
-      if (n) return res.status(409).json({ error: `${req.params.name} has ${n} service${n === 1 ? '' : 's'}: delete or move them before rejecting it` });
+      if (n) throw new ApiError(409, 'has_services', `${req.params.name} has ${n} service${n === 1 ? '' : 's'}: delete or move them before rejecting it`);
     }
     const r = db.run(`UPDATE machines SET status = ?, decided_at = ${db.NOW} WHERE name = ? AND activated_at IS NOT NULL`, status, req.params.name);
-    if (!r.changes) return res.status(404).json({ error: 'no such machine' });
+    if (!r.changes) throw new ApiError(404, 'not_found', 'no such machine');
     console.log(`[agent] ${req.params.name} ${status}`);
     res.json({ ok: true, status });
   });
@@ -90,9 +91,9 @@ for (const [action, status] of [['approve', 'approved'], ['reject', 'rejected']]
 // Remove a machine (and its key). Refused while it still has services.
 app.delete('/api/machines/:name', (req, res) => {
   const m = db.get('SELECT id FROM machines WHERE name = ? AND activated_at IS NOT NULL', req.params.name);
-  if (!m) return res.status(404).json({ error: 'no such machine' });
+  if (!m) throw new ApiError(404, 'not_found', 'no such machine');
   const { n } = db.get('SELECT COUNT(*) AS n FROM services WHERE machine_id = ?', m.id);
-  if (n) return res.status(409).json({ error: `${req.params.name} still has ${n} service${n === 1 ? '' : 's'}: delete or move them first` });
+  if (n) throw new ApiError(409, 'has_services', `${req.params.name} still has ${n} service${n === 1 ? '' : 's'}: delete or move them first`);
   db.run('DELETE FROM machines WHERE id = ?', m.id);
   agent.kick(req.params.name);
   console.log(`[agent] ${req.params.name} removed`);
@@ -102,16 +103,14 @@ app.delete('/api/machines/:name', (req, res) => {
 // Services (definitions in the database, run on each machine by its fleet-agent).
 app.get('/api/services', async (req, res) => res.json(await services.listWithStatus()));
 app.post('/api/services', async (req, res) => res.status(201).json(await services.create(req.body || {})));
-app.get('/api/services/:name', async (req, res) => {
-  const svc = await services.get(req.params.name);
-  try { svc.status = await services.status(svc); } catch (e) { svc.status = { error: e.message }; }
-  res.json(services.withState(svc));
-});
+app.get('/api/services/:name', async (req, res) => res.json(await services.single(req.params.name)));
 app.put('/api/services/:name', async (req, res) => res.json(await services.update(req.params.name, req.body || {})));
 // ?force=1: delete even if its machine can't be reached (the unit may still be running there).
 app.delete('/api/services/:name', async (req, res) => { await services.remove(req.params.name, { force: req.query.force === '1' }); res.json({ ok: true }); });
+// ?wait=1 answers once the service is ready (start, restart) or stopped (stop); &timeout=<seconds> (default 120).
+// The answer is the service with live status, plus changed: false if it already was running (start) / stopped (stop).
 for (const action of ['start', 'stop', 'restart'])
-  app.post(`/api/services/:name/${action}`, async (req, res) => res.json(await services[action](req.params.name)));
+  app.post(`/api/services/:name/${action}`, async (req, res) => res.json(await services[action](req.params.name, services.waitOptions(req.query))));
 app.get('/api/services/:name/versions', async (req, res) => res.json(await services.versions(req.params.name)));
 app.post('/api/services/:name/rollback', async (req, res) => res.json(await services.rollback(req.params.name, Number((req.body || {}).version))));
 app.get('/api/services/:name/logs', async (req, res) => res.type('text/plain').send(await services.logs(req.params.name, req.query.lines)));
@@ -123,7 +122,7 @@ app.get('/api/backup', (req, res) => {
   res.attachment(`fleet-${stamp}.fleetbackup`).type('application/octet-stream').send(backup.backupFile());
 });
 app.post('/api/restore', express.raw({ type: '*/*', limit: '200mb' }), (req, res) => {
-  if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'no file' });
+  if (!Buffer.isBuffer(req.body) || !req.body.length) throw new ApiError(400, 'bad_backup', 'no file');
   const counts = backup.restore(req.body);
   webAuth.ensureApiKey(); // a backup always has one, but never leave the app without a key
   agent.kickAll();
@@ -131,10 +130,19 @@ app.post('/api/restore', express.raw({ type: '*/*', limit: '200mb' }), (req, res
   res.json({ ok: true, ...counts });
 });
 
-app.use((req, res) => res.status(404).json({ error: 'not found' }));
+app.use((req, res, next) => next(new ApiError(404, 'not_found', 'not found')));
+// Every error answers { error, code, ...extra } (codes: lib/errors.js).
 app.use((err, req, res, next) => {
-  if (!err.status) console.error(err);
-  res.status(err.status || 500).json({ error: err.message, ...(err.canForce && { can_force: true }) });
+  let e = err;
+  if (!(e instanceof ApiError)) {
+    // Body-parser errors (express.json / express.raw) carry a status and a type.
+    if (e.type === 'entity.parse.failed') e = new ApiError(400, 'bad_json', 'the request body is not valid JSON');
+    else if (e.type === 'entity.too.large') e = new ApiError(413, 'too_large', 'the request body is too large');
+    else if (e.status >= 400 && e.status < 500) e = new ApiError(e.status, 'invalid', e.message);
+    else { console.error(err); e = new ApiError(500, 'internal', 'internal error: see the server log'); }
+  }
+  if (res.headersSent) return next(err);
+  res.status(e.status).json({ error: e.message, code: e.code, ...e.extra });
 });
 
 db.migrate();

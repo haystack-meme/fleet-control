@@ -82,6 +82,7 @@ form.f .hlwrap textarea{position:relative;display:block;width:100%;min-height:5.
 <label>Run as user <input name="run_as" placeholder="e.g. www-data" autocomplete="off" required></label></div>
 <div class="row2">
 <label>Restart <select name="restart"><option value="no">never</option><option value="on-failure">on failure</option><option value="always">always</option></select></label></div>
+<label>Health URL <span class="mut">(optional: checked from its machine; it is "ready" once this answers)</span><input name="health_url" placeholder="http://127.0.0.1:8080/health" autocomplete="off" spellcheck="false"></label>
 <label>Environment <span class="mut">(one KEY=value per line)</span><textarea name="env" rows="3" spellcheck="false"></textarea></label>
 <label>Extra systemd properties <span class="mut">(one Key=Value per line, e.g. SupplementaryGroups=video render)</span><textarea name="properties" rows="3" spellcheck="false"></textarea></label>
 <p id="ferr" class="err" style="margin:0;min-height:1.2em"></p>
@@ -185,30 +186,39 @@ function newMachinesHtml() {
       '<button class="danger" data-remove-machine="' + esc(m.name) + '">Remove</button></div></div>').join('') + '</section>';
 }
 
-// A service is changing state: restarting (the server's background restart) or systemd starting / stopping it.
+// A service is changing state: a request is starting / stopping / restarting it (busy), or systemd is.
 const TRANSIENT = { activating: 'starting…', deactivating: 'stopping…', reloading: 'reloading…' };
-const busy = (s) => !!(s.restarting || TRANSIENT[(s.status || {}).active]);
+// Running, has a health URL, not answering it yet. Counted as "changing" for 10 minutes after it started, so the page
+// keeps checking quickly while it warms up, but not forever for one that never gets ready.
+const notReady = (s) => !!(s.health_url && s.status?.active === 'active' && !s.status.ready);
+const warmingUp = (s) => notReady(s) && !!s.status.since && Date.now() - Date.parse(s.status.since) < 10 * 60 * 1000;
+// changing: a request or systemd is changing it right now (its buttons are disabled meanwhile).
+// refreshSoon: changing, or warming up (the page checks again every 1.5 s; its buttons stay usable).
+const changing = (s) => !!(s.busy || TRANSIENT[(s.status || {}).active]);
+const refreshSoon = (s) => changing(s) || warmingUp(s);
 function stateText(st, s) {
   if (!st) return '';
   if (st.error) return '<span class="err">' + esc(st.error) + '</span>';
-  if (s.restarting) return '<b>restarting…</b>';
+  if (s.busy) return '<b>' + esc(s.busy) + '…</b>';
   if (TRANSIENT[st.active]) return '<b>' + TRANSIENT[st.active] + '</b>';
   let t = esc(st.active) + (st.sub && st.sub !== st.active ? ' (' + esc(st.sub) + ')' : '');
+  if (s.health_url && st.active === 'active')
+    t = st.ready ? '<b>ready</b>' : '<b>not ready yet</b> <span title="' + esc(s.health_url) + '">(' + esc(st.health?.error || (st.health?.status ? 'answered ' + st.health.status : 'no answer')) + ')</span>';
   if (st.running && st.pid) t += ' · pid ' + st.pid;
   if (st.running && st.since) t += ' · since ' + esc(isNaN(Date.parse(st.since)) ? st.since : new Date(st.since).toLocaleString());
   if (st.active === 'failed' && st.exit_status != null) t += ' · exit ' + st.exit_status;
   return t;
 }
-function dotClass(st) {
+function dotClass(st, s) {
   if (!st || st.error) return 'down';
-  if (st.active === 'active') return 'up';
+  if (st.active === 'active') return s.health_url && !st.ready ? 'activating' : 'up';
   return st.active;
 }
 
 function svcHtml(s) {
-  const st = s.status || {}, run = st.running, unknown = !!st.error || busy(s), open = openCmds.has(s.name);
+  const st = s.status || {}, run = st.running, unknown = !!st.error || changing(s), open = openCmds.has(s.name);
   return '<div class="svc" data-name="' + esc(s.name) + '">' +
-    '<div class="svc-top"><div><span class="dot ' + esc(dotClass(st)) + '"></span><b>' + esc(s.name) + '</b><span class="ver">v' + s.version + '</span>' +
+    '<div class="svc-top"><div><span class="dot ' + esc(dotClass(st, s)) + '"></span><b>' + esc(s.name) + '</b><span class="ver">v' + s.version + '</span>' +
       (s.description ? '<div class="mut">' + esc(s.description) + '</div>' : '') + '</div>' +
     '<div class="mut" style="font-size:14px">' + stateText(st, s) + '</div></div>' +
     (s.last_error ? '<div class="err" style="font-size:14px">' + esc(s.last_error.message) + ' <span class="mut">(' + esc(new Date(s.last_error.at).toLocaleTimeString()) + ')</span></div>' : '') +
@@ -273,12 +283,12 @@ function render() {
   for (const n of openHist) loadHist(n);
 }
 
-// While any service is starting / stopping / restarting, check again every 1.5 s until it settles.
+// While any service is starting / stopping / restarting / warming up, check again every 1.5 s until it settles.
 let fastTimer = null;
 async function loadServices() {
   services = await api('/api/services');
   clearTimeout(fastTimer);
-  if (services.some(busy)) fastTimer = setTimeout(() => { if (!$('dlg').open) loadServices().catch(() => {}); }, 1500);
+  if (services.some(refreshSoon)) fastTimer = setTimeout(() => { if (!$('dlg').open) loadServices().catch(() => {}); }, 1500);
   for (const set of [openLogs, openHist]) for (const n of [...set]) if (!services.some((s) => s.name === n)) set.delete(n);
   for (const n of [...openCmds]) if (!services.some((s) => s.name === n)) openCmds.delete(n);
   saveOpenCmds();
@@ -291,7 +301,7 @@ async function loadLogs(name) {
   catch (e) { box.textContent = e.message; }
 }
 // Version history: newest first, with which fields changed from the version before it.
-const LABEL = { name: 'name', machine: 'machine', description: 'description', command: 'command', workdir: 'working dir', run_as: 'user', env: 'environment', restart: 'restart', properties: 'properties' };
+const LABEL = { name: 'name', machine: 'machine', description: 'description', command: 'command', workdir: 'working dir', run_as: 'user', env: 'environment', restart: 'restart', properties: 'properties', health_url: 'health URL' };
 async function loadHist(name) {
   const box = document.querySelector('.svc[data-name="' + CSS.escape(name) + '"] [data-hist]');
   if (!box) return;
@@ -381,7 +391,7 @@ function openForm(svc, copy = false) {
   f.machine.innerHTML = approved().map((h) => '<option>' + esc(h.name) + '</option>').join('');
   $('ftitle').textContent = copy ? 'New service (copy of ' + svc.name + ')' : svc ? 'Edit ' + svc.name : 'New service';
   if (svc) {
-    for (const k of ['name', 'machine', 'description', 'command', 'workdir', 'run_as', 'restart']) f[k].value = svc[k] ?? '';
+    for (const k of ['name', 'machine', 'description', 'command', 'workdir', 'run_as', 'restart', 'health_url']) f[k].value = svc[k] ?? '';
     f.env.value = Object.entries(svc.env || {}).map(([k, v]) => k + '=' + v).join('\n');
     f.properties.value = (svc.properties || []).join('\n');
     if (copy) f.name.value = (svc.name + '-copy').slice(0, 40);
@@ -413,6 +423,7 @@ $('form').onsubmit = async (ev) => {
   }
   const body = { name: f.name.value.trim(), machine: f.machine.value, description: f.description.value.trim(), command: f.command.value,
     workdir: f.workdir.value.trim() || null, run_as: f.run_as.value.trim() || null, restart: f.restart.value, env,
+    health_url: f.health_url.value.trim() || null,
     properties: f.properties.value.split('\n').map((l) => l.trim()).filter(Boolean) };
   $('save').disabled = true;
   try {

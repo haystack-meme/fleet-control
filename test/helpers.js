@@ -94,10 +94,13 @@ async function login(srv, password) {
 }
 
 // A scripted agent. It enrolls (POST /enroll) or uses `key`, says hello as `hostname`, and answers show / start /
-// stop / logs like the real agent, with units kept in memory. `calls` records every call the server made.
+// stop / logs / probe like the real agent, with units kept in memory. `calls` records every call the server made.
+// ops: the ops it announces in its hello (null = none, like agents from before health checks).
 class FakeAgent {
-  constructor(srv, hostname, { key = null, reconnect = true } = {}) {
-    Object.assign(this, { srv, hostname, key, reconnect });
+  constructor(srv, hostname, { key = null, reconnect = true, ops = ['show', 'start', 'stop', 'logs', 'probe', 'remove'] } = {}) {
+    Object.assign(this, { srv, hostname, key, reconnect, ops });
+    this.health = new Map(); // url -> { ok, status } or { ok: false, error }; unknown urls: connection refused
+    this.crashOnStart = new Set(); // units that exit with status 3 right after they start
     this.units = new Map(); // unit -> { active, sub, pid, startedAt, exitStatus, start: {the start call's body} }
     this.calls = [];
     this.closes = []; // [code, reason] of every closed connection
@@ -115,7 +118,7 @@ class FakeAgent {
       const ws = new WebSocket(`wss://127.0.0.1:${this.srv.httpsPort}/agent`, { rejectUnauthorized: false });
       this.ws = ws;
       let settled = false;
-      ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', machine: this.hostname, key: this.key, stats: this.stats() })));
+      ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', machine: this.hostname, key: this.key, stats: this.stats(), ...(this.ops && { ops: this.ops }) })));
       ws.on('message', async (raw) => {
         const m = JSON.parse(raw);
         if (m.type === 'welcome') { this.welcomed++; if (!settled) { settled = true; resolve(this); } return; }
@@ -152,10 +155,13 @@ class FakeAgent {
       const cur = this.units.get(body.unit);
       if (cur && cur.active !== 'inactive' && cur.active !== 'failed') throw new Error(`systemd-run failed: Unit ${body.unit} was already loaded or has a fragment file.`);
       this.units.set(body.unit, { active: 'active', sub: 'running', pid: 1000 + this.calls.length, startedAt: Math.floor(Date.now() / 1000), exitStatus: 0, start: body });
+      if (this.crashOnStart.has(body.unit)) setTimeout(() => Object.assign(this.units.get(body.unit), { active: 'failed', sub: 'failed', pid: 0, exitStatus: 3 }), 100);
       return undefined;
     }
     if (op === 'stop') { unitOk(body.unit); const s = this.units.get(body.unit); if (s) Object.assign(s, { active: 'inactive', sub: 'dead', pid: 0 }); return undefined; }
     if (op === 'logs') { unitOk(body.unit); return `log of ${body.unit} (lines=${body.lines})\n`; }
+    if (op === 'remove' && this.ops?.includes('remove')) { unitOk(body.unit); this.units.delete(body.unit); return undefined; }
+    if (op === 'probe' && this.ops?.includes('probe')) return body.urls.map((u) => this.health.get(u) || { ok: false, error: 'connect ECONNREFUSED' });
     throw new Error(`unknown op ${op}`);
   }
   close() { this.stopped = true; this.ws?.terminate(); }

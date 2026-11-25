@@ -64,6 +64,19 @@ describe('live: real server, real agents, real systemd', () => {
     assert.equal(dx(M1, 'systemctl show -p TimeoutStopUSec --value fleet-web.service'), '15s');
   });
 
+  it('the command and environment reach bash byte for byte (quotes, $, %, backslashes, newlines, tabs, unicode)', async () => {
+    const command = 'printf "%s" "$BASH_EXECUTION_STRING" > /tmp/cmd-$USER; printf "%s" "$ODD" > /tmp/env-$USER\n# a second line: \'single\' "double" \\back\\slash\t$HOME ${PATH%%:*} 100% `true` — ünïcödé\nexec sleep infinity';
+    const odd = `a "b" 'c' \\d $HOME %p \`e\` — ü`;
+    await create({ name: 'exact', command, env: { ODD: odd } });
+    await ok('POST', '/api/services/exact/start?wait=1');
+    await until(() => dx(M1, 'test -s /tmp/env-tester && echo y', { ok: false }) === 'y', { what: 'files' });
+    assert.equal(execFileSync('docker', ['exec', `fleet-live-${M1}`, 'cat', '/tmp/cmd-tester'], { encoding: 'utf8' }), command);
+    assert.equal(execFileSync('docker', ['exec', `fleet-live-${M1}`, 'cat', '/tmp/env-tester'], { encoding: 'utf8' }), odd);
+    assert.equal(dx(M1, 'systemctl show -p FragmentPath --value fleet-exact.service'), '/run/systemd/system/fleet-exact.service');
+    await ok('DELETE', '/api/services/exact');
+    await until(() => dx(M1, 'test -e /run/systemd/system/fleet-exact.service && echo yes || echo no') === 'no', { what: 'unit file removed' });
+  });
+
   it('shell commands work as written (pipes, quotes, redirects); logs show the output', async () => {
     await create({ name: 'shell', command: `for i in 1 2 3; do echo "line $i"; done; echo "a b" | tr a-z A-Z > /tmp/out-$USER; echo 'done: "quoted"'; exec sleep infinity` });
     await ok('POST', '/api/services/shell/start');
@@ -97,7 +110,7 @@ describe('live: real server, real agents, real systemd', () => {
     const before = (await svc('web')).status.pid;
     assert.ok(dx(M1, `tr '\\0' '\\n' < /proc/${before}/environ`).includes('GREETING=hi there'));
     await ok('POST', '/api/services/web/restart');
-    await until(async () => { const s = await svc('web'); return !s.restarting && s.status.running && s.status.pid !== before; }, { timeoutMs: 30000, what: 'restart' });
+    await until(async () => { const s = await svc('web'); return !s.busy && s.status.running && s.status.pid !== before; }, { timeoutMs: 30000, what: 'restart' });
     const pid = (await svc('web')).status.pid;
     assert.ok(dx(M1, `tr '\\0' '\\n' < /proc/${pid}/environ`).includes('GREETING=changed'));
   });
@@ -162,6 +175,91 @@ describe('live: real server, real agents, real systemd', () => {
     const list = await until(async () => { const l = (await ok('GET', '/api/services')).filter((s) => s.name.startsWith('bulk-')); return l.filter((s) => s.status.running).length === 6 && l; }, { what: 'bulk' });
     for (const s of list) assert.equal(s.status.running, Number(s.name.split('-')[1]) % 2 === 0, s.name);
     for (let i = 0; i < 12; i++) await ok('DELETE', `/api/services/bulk-${i}`);
+  });
+
+  it('health URL + start?wait=1: answers only once the real server answers (it starts listening after 3 s)', async () => {
+    dx(M1, 'mkdir -p /srv/slow && echo ok > /srv/slow/health && chown -R tester /srv/slow');
+    await create({ name: 'slow', workdir: '/srv/slow', command: 'sleep 3; exec python3 -m http.server 8100 --bind 127.0.0.1',
+      health_url: 'http://127.0.0.1:8100/health' });
+    const t0 = Date.now();
+    const r = await api('POST', '/api/services/slow/start?wait=1&timeout=30');
+    const took = Date.now() - t0;
+    assert.equal(r.status, 200, r.text);
+    assert.ok(took >= 3000 && took < 15000, `took ${took} ms`);
+    assert.equal(r.json.changed, true); assert.equal(r.json.status.ready, true); assert.deepEqual(r.json.status.health, { ok: true, status: 200 });
+    assert.equal(dx(M1, 'curl -s 127.0.0.1:8100/health'), 'ok', 'it really answers');
+    // Again: nothing to do.
+    const again = await api('POST', '/api/services/slow/start?wait=1');
+    assert.equal(again.json.changed, false);
+  });
+
+  it('health URL that stops answering: running but not ready, with the reason', async () => {
+    dx(M1, 'rm /srv/slow/health');
+    const s = await until(async () => { const st = (await svc('slow')).status; return st.ready === false && st; }, { what: 'not ready' });
+    assert.equal(s.running, true); assert.deepEqual(s.health, { ok: false, status: 404 });
+    dx(M1, 'echo ok > /srv/slow/health');
+    await until(async () => (await svc('slow')).status.ready, { what: 'ready again' });
+  });
+
+  it('a real crash while starting: 502 start_failed with the exit status and the real log lines', async () => {
+    await create({ name: 'broken', command: 'echo "missing config file" >&2; exit 4', health_url: 'http://127.0.0.1:8101/' });
+    const r = await api('POST', '/api/services/broken/start?wait=1&timeout=30');
+    assert.equal(r.status, 502, r.text); assert.equal(r.json.code, 'start_failed');
+    assert.match(r.json.error, /exit status 4/); assert.match(r.json.logs, /missing config file/);
+  });
+
+  it('restart=always crash loop while waiting: start_failed (not a 30 s wait)', async () => {
+    await create({ name: 'looper', command: 'exit 1', restart: 'always', health_url: 'http://127.0.0.1:8102/' });
+    const t0 = Date.now();
+    const r = await api('POST', '/api/services/looper/start?wait=1&timeout=30');
+    assert.equal(r.status, 502, r.text); assert.equal(r.json.code, 'start_failed'); assert.match(r.json.error, /restarting it/);
+    assert.ok(Date.now() - t0 < 10000);
+    await ok('POST', '/api/services/looper/stop?wait=1');
+  });
+
+  it('not ready by the timeout: 504 not_ready; it is left running', async () => {
+    await create({ name: 'never', command: 'exec sleep infinity', health_url: 'http://127.0.0.1:8103/' });
+    const r = await api('POST', '/api/services/never/start?wait=1&timeout=3');
+    assert.equal(r.status, 504); assert.equal(r.json.code, 'not_ready'); assert.match(r.json.error, /ECONNREFUSED/);
+    assert.equal((await svc('never')).status.running, true);
+    await ok('POST', '/api/services/never/stop?wait=1');
+  });
+
+  it('stop?wait=1 answers once the process is really gone (after its 3 s TimeoutStopSec)', async () => {
+    await ok('POST', '/api/services/stubborn/start?wait=1');
+    const { pid } = (await svc('stubborn')).status;
+    const t0 = Date.now();
+    const r = await ok('POST', '/api/services/stubborn/stop?wait=1');
+    const took = Date.now() - t0;
+    assert.ok(took >= 2500, `took ${took} ms`); assert.equal(r.changed, true); assert.equal(r.status.running, false);
+    assert.equal(dx(M1, `kill -0 ${pid} 2>/dev/null && echo alive || echo gone`), 'gone');
+  });
+
+  it('restart?wait=1 of a slow service: answers when the new process is ready', async () => {
+    const before = (await svc('slow')).status.pid;
+    const t0 = Date.now();
+    const r = await ok('POST', '/api/services/slow/restart?wait=1&timeout=30');
+    assert.ok(Date.now() - t0 >= 3000); assert.equal(r.status.ready, true); assert.notEqual(r.status.pid, before); assert.equal(r.busy, null);
+  });
+
+  it('switching a GPU-style pair with Conflicts= and wait: one call, the other one is stopped, the new one ready', async () => {
+    await ok('PUT', '/api/services/gpu-a', { health_url: 'http://127.0.0.1:8104/', command: 'cd /tmp && exec python3 -m http.server 8104 --bind 127.0.0.1', properties: ['Conflicts=fleet-gpu-b.service'] });
+    await ok('POST', '/api/services/gpu-b/start?wait=1');
+    await ok('PUT', '/api/services/gpu-b', { properties: ['Conflicts=fleet-gpu-a.service'] });
+    // Back and forth, several times: each start stops the other (both directions refer to each other).
+    for (const [on, off] of [['gpu-a', 'gpu-b'], ['gpu-b', 'gpu-a'], ['gpu-a', 'gpu-b'], ['gpu-b', 'gpu-a'], ['gpu-a', 'gpu-b']]) {
+      const r = await ok('POST', `/api/services/${on}/start?wait=1&timeout=30`);
+      assert.equal(r.changed, true, on); assert.equal(r.status.ready, true, on);
+      assert.equal((await svc(off)).status.running, false, `${off} stopped by starting ${on}`);
+    }
+  });
+
+  it('simultaneous starts against real systemd: one start, the rest changed: false, no errors', async () => {
+    await create({ name: 'race', command: 'exec sleep infinity' });
+    const rs = await Promise.all([1, 2, 3, 4, 5].map(() => api('POST', '/api/services/race/start')));
+    assert.deepEqual(rs.map((r) => r.status), [200, 200, 200, 200, 200], rs.map((r) => r.text).join('\n'));
+    assert.equal(rs.filter((r) => r.json.changed).length, 1);
+    await ok('DELETE', '/api/services/race');
   });
 
   it('a machine going down: offline, 502s, force delete; after it boots its agent is back and services are stopped', async () => {
