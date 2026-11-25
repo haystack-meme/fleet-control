@@ -11,6 +11,15 @@
 .wrap{max-width:880px;margin:0 auto;padding:28px 16px 64px}
 header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:28px;flex-wrap:wrap}
 h1{margin:0;font-size:20px}
+.tools{display:flex;align-items:center;gap:8px}
+.tools>button,.tools>a.btn{height:38px;display:inline-flex;align-items:center;justify-content:center}
+.icon{width:38px;padding:0;font-size:19px;line-height:1}
+/* The ⋯ menu: a popover (the browser closes it on Esc or a click outside), placed under its button by placeMenu(). */
+#menu{position:fixed;inset:auto;margin:0;padding:6px;min-width:210px;border:1px solid var(--line);border-radius:10px;
+  background:var(--card);color:var(--fg);box-shadow:0 10px 30px rgba(0,0,0,.18)}
+#menu button{display:block;width:100%;text-align:left;border:0;background:none;padding:8px 12px;border-radius:6px}
+#menu button:hover,#menu button:focus-visible{background:var(--code);outline:none}
+#menu hr{border:0;border-top:1px solid var(--line);margin:6px 4px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px}
 button,input,select,textarea{font:inherit;border-radius:8px;border:1px solid var(--line);padding:7px 11px;background:var(--card);color:var(--fg)}
 a.btn{display:inline-block;font:inherit;border-radius:8px;border:1px solid var(--line);padding:7px 11px;background:var(--card);color:var(--fg);text-decoration:none}button{cursor:pointer}button.pri{background:var(--acc);border-color:var(--acc);color:#fff}button.danger{color:var(--bad)}
@@ -64,7 +73,22 @@ form.f .hlwrap textarea{position:relative;display:block;width:100%;min-height:5.
 </style></head><body>
 <div class="wrap">
 <header><h1>Fleet</h1>
-<div><button id="new" class="pri">New service</button> <button id="ref">Refresh</button> <a class="btn" href="/files/" target="_blank" rel="noopener" id="filesb" hidden>Public files</a> <button id="bak" title="Download the whole database (machines, services, history, settings)">Download backup</button> <button id="rst" title="Replace everything with a downloaded backup">Restore…</button><input id="rstf" type="file" accept=".fleetbackup" hidden> <button id="keyb">API key</button> <button id="pwb">Password</button> <button id="out">Sign out</button></div></header>
+<div class="tools">
+<a class="btn" href="/files/" target="_blank" rel="noopener" id="filesb" hidden>Public files</a>
+<button id="ref" class="icon" title="Refresh" aria-label="Refresh">↻</button>
+<button id="new" class="pri">New service</button>
+<button id="menub" class="icon" popovertarget="menu" title="More" aria-label="More" aria-haspopup="menu">⋯</button>
+<div id="menu" popover role="menu" aria-label="More">
+<button id="keyb" role="menuitem">API key</button>
+<button id="pwb" role="menuitem">Change password</button>
+<hr>
+<button id="bak" role="menuitem" title="Download the whole database (machines, services, history, settings)">Download backup</button>
+<button id="rst" role="menuitem" title="Replace everything with a downloaded backup">Restore from backup…</button>
+<hr>
+<button id="out" role="menuitem">Sign out</button>
+</div>
+<input id="rstf" type="file" accept=".fleetbackup" hidden>
+</div></header>
 
 <div id="svcs"><div class="card empty mut">Loading…</div></div>
 </div>
@@ -452,6 +476,24 @@ $('form').onsubmit = async (ev) => {
 };
 
 $('ref').onclick = refresh;
+// The ⋯ menu: right-aligned under its button; an item closes it before doing its action; arrow keys move between items.
+const menu = $('menu'), menuItems = () => [...menu.querySelectorAll('[role=menuitem]')];
+function placeMenu() {
+  const b = $('menub').getBoundingClientRect();
+  menu.style.top = (b.bottom + 6) + 'px';
+  menu.style.left = Math.max(8, Math.min(b.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8)) + 'px';
+}
+menu.addEventListener('toggle', (e) => { if (e.newState === 'open') { placeMenu(); menuItems()[0].focus(); } });
+menu.addEventListener('click', (e) => { if (e.target.closest('[role=menuitem]')) menu.hidePopover(); }, true);
+menu.addEventListener('keydown', (e) => {
+  const items = menuItems(), i = items.indexOf(document.activeElement);
+  const to = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: items.length - 1 }[e.key];
+  if (to === undefined) return;
+  e.preventDefault();
+  items[(to + items.length) % items.length].focus();
+});
+// Stays under its button when the window resizes or the page scrolls (phones resize as their address bar slides).
+for (const ev of ['resize', 'scroll']) addEventListener(ev, () => { if (menu.matches(':popover-open')) placeMenu(); }, { passive: true });
 const showKey = (k) => { $('keyval').value = k; $('keycopy').textContent = 'Copy'; };
 $('keyb').onclick = async () => {
   $('keyerr').textContent = ''; $('keyval').value = '';
