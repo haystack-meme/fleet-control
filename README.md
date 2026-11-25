@@ -85,7 +85,8 @@ Run the same command again to update the agent; it keeps its key while the serve
   (`data/fleet.db`, or `FLEET_DB_FILE`); back it up with **Download backup** on the page (safe while the server
   runs) and restore it with **Restore…**. The file is gzip(database) followed by the SHA-256 of the gzip bytes; the plain
   database is `head -c -32 <file> | gunzip > fleet.db`.
-- Everything is done on the page. The only command-line tool is for a forgotten password:
+- Everything is done on the page, including changing the password (**Password** in the header). The only
+  command-line tool is for a forgotten password:
   `node bin/admin.js clear-password` (Docker: `docker compose exec server node bin/admin.js clear-password`) removes
   it and signs everyone out; the next person to open the page sets a new one.
 
@@ -102,6 +103,7 @@ All endpoints except `/health`, `/login`, `/enroll` and `/install/*` need a sign
 | GET, PUT, DELETE | `/api/services/{name}` | read / save (new version) / delete (`?force=1` if its machine is unreachable) |
 | POST | `/api/services/{name}/start`, `/stop`, `/restart` | control |
 | GET | `/api/services/{name}/logs?lines=200` | journal |
+| POST | `/api/password` | `{"current": "…", "password": "…"}`: change the web password; signs out every other session |
 | GET | `/api/backup` | backup file `fleet-<UTC time>.fleetbackup`: gzip of the whole database + the SHA-256 of that gzip (last 32 bytes) |
 | POST | `/api/restore` | body = a backup file exactly as downloaded (refused if the SHA-256 doesn't match): replaces machines, settings (incl. the password), services and their history; sessions are kept |
 | GET | `/api/services/{name}/versions` | history |

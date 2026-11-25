@@ -64,7 +64,7 @@ form.f .hlwrap textarea{position:relative;display:block;width:100%;min-height:5.
 </style></head><body>
 <div class="wrap">
 <header><h1>Fleet</h1>
-<div><button id="new" class="pri">New service</button> <button id="ref">Refresh</button> <button id="bak" title="Download the whole database (machines, services, history, settings)">Download backup</button> <button id="rst" title="Replace everything with a downloaded backup">Restore…</button><input id="rstf" type="file" accept=".fleetbackup" hidden> <button id="out">Sign out</button></div></header>
+<div><button id="new" class="pri">New service</button> <button id="ref">Refresh</button> <button id="bak" title="Download the whole database (machines, services, history, settings)">Download backup</button> <button id="rst" title="Replace everything with a downloaded backup">Restore…</button><input id="rstf" type="file" accept=".fleetbackup" hidden> <button id="pwb">Password</button> <button id="out">Sign out</button></div></header>
 
 <div id="svcs"><div class="card empty mut">Loading…</div></div>
 </div>
@@ -86,6 +86,15 @@ form.f .hlwrap textarea{position:relative;display:block;width:100%;min-height:5.
 <label>Extra systemd properties <span class="mut">(one Key=Value per line, e.g. SupplementaryGroups=video render)</span><textarea name="properties" rows="3" spellcheck="false"></textarea></label>
 <p id="ferr" class="err" style="margin:0;min-height:1.2em"></p>
 <div class="fbtns"><button type="button" id="cancel">Cancel</button><button class="pri" id="save">Save</button></div>
+</form></dialog>
+<dialog id="pwdlg" style="width:min(380px,calc(100vw - 24px))"><form class="f" id="pwform" method="dialog">
+<h1 style="font-size:18px;margin:0">Change password</h1>
+<label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
+<label>New password <input name="password" type="password" autocomplete="new-password" required></label>
+<label>Repeat new password <input name="password2" type="password" autocomplete="new-password" required></label>
+<p class="mut" style="margin:0;font-size:13px">Everyone else is signed out; you stay signed in.</p>
+<p id="pwerr" class="err" style="margin:0;min-height:1.2em"></p>
+<div class="fbtns"><button type="button" id="pwcancel">Cancel</button><button class="pri" id="pwsave">Change password</button></div>
 </form></dialog>
 
 <script>
@@ -397,6 +406,20 @@ $('form').onsubmit = async (ev) => {
 };
 
 $('ref').onclick = refresh;
+$('pwb').onclick = () => { $('pwform').reset(); $('pwerr').textContent = ''; $('pwdlg').showModal(); };
+$('pwcancel').onclick = () => $('pwdlg').close();
+$('pwform').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const f = $('pwform');
+  if (f.password.value !== f.password2.value) { $('pwerr').textContent = 'The new passwords do not match'; return; }
+  $('pwsave').disabled = true;
+  try {
+    await api('/api/password', { method: 'POST', body: JSON.stringify({ current: f.current.value, password: f.password.value }) });
+    $('pwdlg').close();
+    alert('Password changed. Everyone else has been signed out.');
+  } catch (e) { $('pwerr').textContent = e.message; }
+  finally { $('pwsave').disabled = false; }
+};
 $('bak').onclick = () => { location.href = '/api/backup'; };
 $('rst').onclick = () => { $('rstf').value = ''; $('rstf').click(); };
 $('rstf').onchange = async () => {

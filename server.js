@@ -39,6 +39,9 @@ app.get('/', (req, res) => webAuth.valid(req) ? res.sendFile(path.join(pub, 'ind
 // API: needs a signed-in web session (the password is the only security).
 app.use('/api', (req, res, next) => (webAuth.valid(req) ? next() : res.status(401).json({ error: 'sign in first' })));
 
+// Change the web password (needs the current one; signs out every other session).
+app.post('/api/password', webAuth.changePassword);
+
 // Machines: is the agent connected (online)? + the latest stats it pushed.
 // status: pending (new, waiting for the user) | approved | rejected; stats only for approved machines.
 app.get('/api/machines', (req, res) => {
