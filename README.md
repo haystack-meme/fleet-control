@@ -68,8 +68,8 @@ Read this before installing.
   `files/`, including over unencrypted HTTP. Only put things there you'd hand to anyone on the network. (Hidden
   files and folders, whose names start with `.`, are never served. HTML files open sandboxed, so they can't act as
   the signed-in page. Set `FLEET_FILES_DIR=off` to turn the feature off.)
-- **No warranty.** This is a small personal project, provided "as is" under the Apache-2.0 license. It has no
-  automated test suite yet. Back up your data (**Download backup**) and test it before relying on it.
+- **No warranty.** This is a small personal project, provided "as is" under the Apache-2.0 license. Back up your
+  data (**Download backup**) and test it before relying on it.
 
 ## Getting started
 
@@ -190,13 +190,25 @@ curl -k -H "Authorization: Bearer $FLEET_API_KEY" https://<server>/api/services
 | GET | `/api/backup` | backup file `fleet-<UTC time>.fleetbackup` |
 | POST | `/api/restore` | body = a backup file exactly as downloaded (refused if changed): replaces machines, settings (incl. the password), services and their history; sessions are kept |
 
+## Tests
+
+- `npm test`: the whole REST API, end to end. It starts a throwaway server over real HTTPS, and scripted agents
+  that speak the real protocol stand in for machines. It covers sign-in, the API key, machines, every service
+  action and validation rule, versions and rollback, offline machines, backup and restore, and the public files.
+  It needs no root and takes about a second.
+- `sudo npm run test:live` (needs Docker): the real thing. It builds a fleet-server container with `install.sh`
+  and three systemd containers enrolled with the real `fleet-agent --install`, then checks inside them what each
+  API call actually did: users, folders, environment, restart policies, Conflicts=, stop timeouts, a machine
+  rebooting, the server restarting, backup and restore, and certificate pinning. Afterwards it removes every
+  container (`KEEP=1` leaves them running).
+
 ## Future work
 
 Planned fixes and ideas, roughly in order. Details for the first two are in [TODO.md](TODO.md).
 
 **Fixes**
 
-- **Tests and CI:** a `node --test` suite and a GitHub Actions workflow.
+- **CI:** a GitHub Actions workflow that runs `npm test` on every push.
 - **Harden the server's systemd unit:** sandboxing (`ProtectSystem=strict` and friends).
 - **Cap the size of restored backups** when they are decompressed.
 - **Deleting a service waits for it to stop**, so a stop that fails on the machine can't leave it running untracked.

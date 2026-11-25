@@ -18,9 +18,10 @@ const backup = require('./lib/backup');
 const pub = path.join(__dirname, 'public');
 const app = express();
 app.disable('x-powered-by');
-// JSON bodies everywhere except /api/restore, which takes the backup file as it is (whatever its Content-Type says).
+// JSON bodies for sign-in and the API only, except /api/restore, which takes the backup file as it is (whatever its
+// Content-Type says). Other paths (public files, install files) never read a body.
 const json = express.json();
-app.use((req, res, next) => (req.path === '/api/restore' ? next() : json(req, res, next)));
+app.use(['/login', '/logout', '/api'], (req, res, next) => (req.originalUrl.split('?')[0] === '/api/restore' ? next() : json(req, res, next)));
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 

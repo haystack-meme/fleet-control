@@ -1,17 +1,10 @@
 # To do
 
-## Tests and CI
+## CI
 
-There are no automated tests. Add a `node --test` suite (no extra dependencies) covering at least:
-
-- service validation (`lib/services.js`: names, `run_as`, env, properties, reserved names)
-- create / save / version history / rollback, including rollback to a version whose machine was removed
-- backup and restore round trip, and refusal of changed or damaged backup files
-- sign-in: first password, wrong password, password change, session expiry, API key and reroll
-- enrollment: code expiry, activation, pending / approved / rejected, name collisions (`box`, `box-2`)
-- the agent's WebSocket frame parser and `--server` argument parsing
-
-Then a GitHub Actions workflow that runs it on every push, on Node 26.
+`npm test` covers the REST API end to end (`test/api.test.js`) and `sudo npm run test:live` runs the real thing in
+Docker (`test/live/`). Still missing: a GitHub Actions workflow that runs `npm test` on every push (Node 26), and
+unit tests for the agent's WebSocket frame parser and `--server` argument parsing.
 
 ## Harden the server's systemd unit
 
