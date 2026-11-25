@@ -24,7 +24,7 @@ Run and manage long-running commands on a fleet of Linux machines from one web p
 
 ## Requirements
 
-- Linux with systemd on every machine, **Node.js 26.13.1 or newer** at `/usr/local/bin/node`.
+- Linux with systemd on every machine, **Node.js 22.13 or newer** at `/usr/local/bin/node`.
 - The server also needs `openssl` (to make its certificate on first start) and npm. No database server, web server or
   Docker: the whole server is this one folder.
 
@@ -53,7 +53,7 @@ addresses (browsers warn once); to use your own, replace those two files and res
 
 | Name | Default | |
 |---|---|---|
-| `FLEET_HTTPS_PORT` | `443` | |
+| `FLEET_HTTPS_PORT` | `443` | if you change it, give agents `--server <ip>:<port>` |
 | `FLEET_HTTP_PORT` | `80` | only redirects to HTTPS; `0` turns it off |
 | `FLEET_HOST` | `0.0.0.0` | address to listen on |
 | `FLEET_DATA_DIR` | `data` | where `fleet.db` and the certificate live |
@@ -71,6 +71,8 @@ On the new machine (as root, with Node.js installed):
 curl -sk https://<server ip>/install/fleet-agent.js -o /tmp/fleet-agent.js
 sudo node /tmp/fleet-agent.js --install --server <server ip>
 ```
+
+If the server's HTTPS port isn't 443, add it: `--server <server ip>:<port>` (and in the `curl` URL).
 
 It enrolls (one-time code, valid for 1 minute, becomes the machine's key in `/etc/fleet-agent/key`), installs itself as
 `/usr/local/lib/fleet-agent/fleet-agent.js` with the `fleet-agent.service` unit, and starts. The machine appears under

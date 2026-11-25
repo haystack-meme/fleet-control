@@ -1,6 +1,6 @@
 'use strict';
-// fleet-server's only command-line tool. Run on the server, in the fleet-server folder (Docker:
-// `docker compose exec server node bin/admin.js clear-password`):
+// fleet-server's only command-line tool. Run on the server, in the fleet-server folder, as the user the server runs as
+// (e.g. `cd /opt/fleet-control && sudo -u fleet node bin/admin.js clear-password`):
 //   node bin/admin.js clear-password   remove the web password and sign everyone out; the next person to open the
 //                                      page sets a new one
 const db = require('../lib/db');

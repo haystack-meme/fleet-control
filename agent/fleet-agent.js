@@ -12,6 +12,8 @@
 //                                                             /etc/systemd/system/ (filling in the server address), enable + start it
 //   node fleet-agent.js --run --server 192.0.2.10             the agent itself (what the unit runs); connects to wss://<ip>/agent
 //
+// --server is the server's IPv4 address, with :<port> if its HTTPS port isn't 443 (e.g. 192.0.2.10:8443).
+//
 // In --run mode it listens on nothing: it keeps one WebSocket open to the server, says hello with its key + hostname
 // (the server identifies the machine by the key), pushes system + GPU stats every 5 s and runs the commands the server
 // sends. It runs as root and only manages units named fleet-<name>.service.
@@ -30,15 +32,15 @@ const EventEmitter = require('node:events');
 const { execFile, execFileSync } = require('node:child_process');
 
 // ---- Node version: must be at least the version this was built with ----
-const MIN_NODE = '26.13.1';
+const MIN_NODE = '22.13.0';
 {
   const cur = process.versions.node.split('.').map(Number), min = MIN_NODE.split('.').map(Number);
   const i = [0, 1, 2].find((k) => cur[k] !== min[k]); // first part that differs (major, minor, patch)
   if (i !== undefined && cur[i] < min[i]) { console.error(`fleet-agent needs Node ${MIN_NODE} or newer (this is ${process.versions.node})`); process.exit(1); }
 }
 
-// ---- flags: exactly one of --install / --run, plus --server <IPv4 address of fleet-server> ----
-const USAGE = 'usage: sudo node fleet-agent.js --install --server <IPv4 address>\n       node fleet-agent.js --run --server <IPv4 address>';
+// ---- flags: exactly one of --install / --run, plus --server <IPv4 address of fleet-server>[:<HTTPS port>] ----
+const USAGE = 'usage: sudo node fleet-agent.js --install --server <IPv4 address>[:<port>]\n       node fleet-agent.js --run --server <IPv4 address>[:<port>]';
 function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i++) {
@@ -48,7 +50,14 @@ function parseArgs(argv) {
     else if (a.startsWith('--server=')) out.server = a.slice(9);
     else return null;
   }
-  if (!!out.install === !!out.run || !require('node:net').isIPv4(out.server || '')) return null;
+  if (!!out.install === !!out.run) return null;
+  const m = /^([0-9.]+)(?::(\d{1,5}))?$/.exec(out.server || '');
+  if (!m || !require('node:net').isIPv4(m[1])) return null;
+  out.host = m[1];
+  out.port = m[2] === undefined ? 443 : Number(m[2]);
+  if (out.port < 1 || out.port > 65535) return null;
+  // Canonical form (also what the unit and the pin file hold): no :443.
+  out.server = out.port === 443 ? out.host : `${out.host}:${out.port}`;
   return out;
 }
 const args = parseArgs(process.argv.slice(2));
@@ -75,7 +84,7 @@ const pinError = (got) => Object.assign(new Error(`the server at ${args.server} 
 // A TLS connection to the server whose certificate has been checked against the pin (nothing is sent before that).
 function connectTls() {
   return new Promise((resolve, reject) => {
-    const sock = tls.connect({ host: args.server, port: 443, rejectUnauthorized: false }); // the pin is the check
+    const sock = tls.connect({ host: args.host, port: args.port, rejectUnauthorized: false }); // the pin is the check
     sock.setTimeout(15000, () => sock.destroy(new Error('timed out')));
     sock.once('error', reject);
     sock.once('secureConnect', () => {
@@ -92,7 +101,7 @@ function connectTls() {
 async function request(method, path) {
   const sock = await connectTls();
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: args.server, path, method, createConnection: () => sock, headers: { 'Content-Length': 0 } }, (res) => {
+    const req = http.request({ host: args.host, port: args.port, path, method, createConnection: () => sock, headers: { 'Content-Length': 0 } }, (res) => {
       let body = '';
       res.setEncoding('utf8');
       res.on('data', (c) => { body += c; });
