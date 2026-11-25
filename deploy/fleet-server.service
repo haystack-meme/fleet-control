@@ -1,6 +1,5 @@
-# fleet-server as a systemd service (see "Install" in the README). Copy to /etc/systemd/system/, adjust User and
-# WorkingDirectory if needed, then:  sudo systemctl daemon-reload && sudo systemctl enable --now fleet-server
-# Settings go in .env in the app folder (see lib/config.js).
+# fleet-server as a systemd service. Template: ./install.sh fills in @APP_DIR@, @NODE@ and @USER@ and installs it as
+# /etc/systemd/system/fleet-server.service. Settings go in .env in the app folder (see lib/config.js).
 [Unit]
 Description=fleet-server (web page + API over HTTPS; machines connect through their fleet-agent)
 After=network-online.target
@@ -8,9 +7,9 @@ Wants=network-online.target
 StartLimitIntervalSec=0
 
 [Service]
-User=fleet
-WorkingDirectory=/opt/fleet-control
-ExecStart=/usr/local/bin/node server.js
+User=@USER@
+WorkingDirectory=@APP_DIR@
+ExecStart=@NODE@ server.js
 # Lets it listen on ports 80 and 443 without running as root.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE

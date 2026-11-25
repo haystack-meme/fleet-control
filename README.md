@@ -75,16 +75,13 @@ Read this before installing.
 ### 1. Install the server
 
 ```sh
-# a user for the server, and the code
-sudo useradd --system --create-home --home-dir /var/lib/fleet fleet
-sudo install -d -o fleet -g fleet /opt/fleet-control
-sudo -u fleet git clone https://github.com/haystack-meme/fleet-control.git /opt/fleet-control
-cd /opt/fleet-control && sudo -u fleet npm ci --omit=dev
-
-# the service: HTTPS on port 443, port 80 redirects to it
-sudo cp deploy/fleet-server.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now fleet-server
+sudo git clone https://github.com/haystack-meme/fleet-control.git /opt/fleet-control
+cd /opt/fleet-control && sudo ./install.sh
 ```
+
+`install.sh` checks the requirements, creates the system user `fleet`, installs the npm packages, gives `fleet` the
+data folder (the code stays owned by root), installs and enables the `fleet-server` systemd service (HTTPS on port
+443, port 80 redirects to it), starts it and waits until it answers. It prints the server certificate's fingerprint.
 
 ### 2. Set the password
 
@@ -115,14 +112,15 @@ Click **New service**, then fill in a name, the machine, the command and the use
 - **Forgot the password:** `cd /opt/fleet-control && sudo -u fleet node bin/admin.js clear-password` removes it and
   signs everyone out. The next person to open the page sets a new one.
 - **Back up:** **Download backup** on the page (safe while the server runs). Restore with **Restore…**.
-- **Update the server:** `cd /opt/fleet-control && sudo -u fleet git pull && sudo -u fleet npm ci --omit=dev && sudo systemctl restart fleet-server`
+- **Update the server:** `cd /opt/fleet-control && sudo git pull && sudo ./install.sh`
 - **Update an agent:** run the same `--install` command again. It keeps its key while the server still accepts it.
 - **Logs:** `journalctl -u fleet-server` on the server, `journalctl -u fleet-agent` on a machine, **Logs** on the
   page for a service.
 
 ### Settings
 
-All optional, in `.env` in the server folder (git-ignored), one `NAME=value` per line:
+All optional, in `.env` in the server folder (git-ignored), one `NAME=value` per line. Run `sudo ./install.sh` again
+after changing them:
 
 | Name | Default | |
 |---|---|---|
@@ -189,8 +187,7 @@ Planned fixes and ideas, roughly in order. Details for the first two are in [TOD
 **Fixes**
 
 - **Tests and CI:** a `node --test` suite and a GitHub Actions workflow.
-- **Harden the server's systemd unit:** sandboxing (`ProtectSystem=strict` and friends), and code owned by root with
-  only `data/` writable by the server.
+- **Harden the server's systemd unit:** sandboxing (`ProtectSystem=strict` and friends).
 - **Public files on their own origin:** serve `FLEET_PUBLIC_DIR` as downloads (or on a separate port) so an HTML
   file there can't act as the signed-in page.
 - **Cap the size of restored backups** when they are decompressed.

@@ -16,7 +16,7 @@ Then a GitHub Actions workflow that runs it on every push, on Node 26.
 ## Harden the server's systemd unit
 
 fleet-server can run any command as root on every approved machine, so its own process should be locked down.
-In `deploy/fleet-server.service`, add sandboxing such as:
+In `deploy/fleet-server.service` (the template `install.sh` fills in), add sandboxing such as:
 
 ```ini
 ProtectSystem=strict
@@ -33,6 +33,3 @@ LockPersonality=yes
 
 (plus `ReadOnlyPaths=` for `FLEET_PUBLIC_DIR` if it is set). Check that first-start certificate creation with
 `openssl` still works under it.
-
-Also change the README install so the code is owned by root and only `data/` is writable by the `fleet` user, so a
-compromised server process can't rewrite its own code. Updating then becomes `sudo git pull && sudo npm ci --omit=dev`.
