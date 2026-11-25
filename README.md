@@ -25,25 +25,10 @@ Run and manage long-running commands on a fleet of Linux machines from one web p
 ## Requirements
 
 - Linux with systemd on every machine, **Node.js 26.13.1 or newer** at `/usr/local/bin/node`.
-- The server: either Docker with Compose, or Node.js plus a TLS reverse proxy such as nginx. No database server is needed.
+- The server also needs `openssl` (to make its certificate on first start) and npm. No database server, web server or
+  Docker: the whole server is this one folder.
 
-## Quick start with Docker
-
-Runs fleet-server and an HTTPS proxy (with a self-signed certificate made on first start):
-
-```sh
-git clone https://github.com/haystack-meme/fleet-control.git && cd fleet-control
-docker compose up -d
-```
-
-Then open `https://<server>/`: with no password set yet, the page asks you to choose one (the first person to open
-it sets it, so do this right away). The database (`fleet.db`) lives in the `data` volume, the certificate in
-`certs`. Ports and the certificate's names can be set in an optional `.env` (see `.env.example`). To add your own nginx
-locations to the proxy (for example a public file folder), put them in a `compose.override.yaml` (git-ignored) that
-mounts `*.conf` files into `/etc/nginx/fleet.d/`. Only the server runs in Docker: the agents run directly on each
-machine (see [Adding a machine](#adding-a-machine)).
-
-## Server setup without Docker
+## Install the server
 
 ```sh
 # 1. a user for the server, and the code
@@ -52,14 +37,31 @@ sudo install -d -o fleet -g fleet /opt/fleet-control
 sudo -u fleet git clone https://github.com/haystack-meme/fleet-control.git /opt/fleet-control
 cd /opt/fleet-control && sudo -u fleet npm ci --omit=dev
 
-# 2. the service (the database, data/fleet.db, is created on first start)
+# 2. the service: HTTPS on port 443, port 80 redirects to it
 sudo cp deploy/fleet-server.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now fleet-server
-
-# 3. HTTPS in front of it: see deploy/nginx.conf.example
 ```
 
-Then open `https://<server>/` and sign in.
+Then open `https://<server>/`: with no password set yet, the page asks you to choose one (the first person to open
+it sets it, so do this right away).
+
+Everything the server keeps is in `data/` in its folder: the database `fleet.db` and the HTTPS certificate
+`tls.crt` + `tls.key`. The certificate is self-signed and made on first start for the machine's hostname and IP
+addresses (browsers warn once); to use your own, replace those two files and restart.
+
+**Settings** (all optional) go in `.env` in the folder (git-ignored), one `NAME=value` per line:
+
+| Name | Default | |
+|---|---|---|
+| `FLEET_HTTPS_PORT` | `443` | |
+| `FLEET_HTTP_PORT` | `80` | only redirects to HTTPS; `0` turns it off |
+| `FLEET_HOST` | `0.0.0.0` | address to listen on |
+| `FLEET_DATA_DIR` | `data` | where `fleet.db` and the certificate live |
+| `FLEET_PUBLIC_DIR` | | a folder anyone can read without a password (file index, read-only) ... |
+| `FLEET_PUBLIC_PATH` | `/files/` | ... at this path |
+
+**Update:** `cd /opt/fleet-control && sudo -u fleet git pull && sudo -u fleet npm ci --omit=dev && sudo systemctl restart fleet-server`.
+Logs: `journalctl -u fleet-server`.
 
 ## Adding a machine
 
@@ -82,12 +84,12 @@ Run the same command again to update the agent; it keeps its key while the serve
   `systemd-run --unit=fleet-<name>.service -p User=… -- /bin/bash -c <command>` on its machine.
 - Services are transient: after a machine reboots they are stopped until started again from the page.
 - The server stores only a hash of each machine key and of each session cookie. All data lives in one SQLite file
-  (`data/fleet.db`, or `FLEET_DB_FILE`); back it up with **Download backup** on the page (safe while the server
+  (`data/fleet.db`); back it up with **Download backup** on the page (safe while the server
   runs) and restore it with **Restore…**. The file is gzip(database) followed by the SHA-256 of the gzip bytes; the plain
   database is `head -c -32 <file> | gunzip > fleet.db`.
 - Everything is done on the page, including changing the password (**Password** in the header). The only
   command-line tool is for a forgotten password:
-  `node bin/admin.js clear-password` (Docker: `docker compose exec server node bin/admin.js clear-password`) removes
+  `cd /opt/fleet-control && sudo -u fleet node bin/admin.js clear-password` removes
   it and signs everyone out; the next person to open the page sets a new one.
 
 ### API

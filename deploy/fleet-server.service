@@ -1,7 +1,8 @@
-# fleet-server as a systemd service. Copy to /etc/systemd/system/, adjust User/WorkingDirectory, then:
-#   sudo systemctl daemon-reload && sudo systemctl enable --now fleet-server
+# fleet-server as a systemd service (see "Install" in the README). Copy to /etc/systemd/system/, adjust User and
+# WorkingDirectory if needed, then:  sudo systemctl daemon-reload && sudo systemctl enable --now fleet-server
+# Settings go in .env in the app folder (see lib/config.js).
 [Unit]
-Description=fleet-server (web page + API; machines connect through their fleet-agent)
+Description=fleet-server (web page + API over HTTPS; machines connect through their fleet-agent)
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=0
@@ -10,9 +11,10 @@ StartLimitIntervalSec=0
 User=fleet
 WorkingDirectory=/opt/fleet-control
 ExecStart=/usr/local/bin/node server.js
-# Optional: FLEET_HOST, FLEET_PORT (default 127.0.0.1:3100), FLEET_DB_FILE (default data/fleet.db in the code folder),
-# FLEET_AGENT_DIR, FLEET_TRUST_PROXY
-#Environment=FLEET_AGENT_DIR=/srv/fleet/install
+# Lets it listen on ports 80 and 443 without running as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
 Restart=always
 RestartSec=2
 

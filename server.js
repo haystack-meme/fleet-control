@@ -1,6 +1,13 @@
 'use strict';
+// fleet-server: the web page, the API and the agents' WebSocket, over HTTPS (port 443; port 80 only redirects).
+// Settings: see lib/config.js (environment or .env). Data: data/fleet.db + data/tls.crt/.key.
 const path = require('node:path');
+const http = require('node:http');
+const https = require('node:https');
 const express = require('express');
+const config = require('./lib/config');
+const tls = require('./lib/tls');
+const publicFiles = require('./lib/public-files');
 const agent = require('./lib/agent');
 const db = require('./lib/db');
 const webAuth = require('./lib/web-auth');
@@ -9,16 +16,13 @@ const backup = require('./lib/backup');
 
 const pub = path.join(__dirname, 'public');
 const app = express();
-// The TLS proxy in front is trusted for the client's address. Default loopback (proxy on the same host);
-// Docker sets FLEET_TRUST_PROXY=uniquelocal (the proxy container is on a private network).
-app.set('trust proxy', process.env.FLEET_TRUST_PROXY || 'loopback');
+app.disable('x-powered-by');
 app.use(express.json());
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
 // Public: the agent and its unit template, for `curl -k https://<server>/install/fleet-agent.js` on a new machine.
-// Served from ./agent, or FLEET_AGENT_DIR (e.g. a root-owned copy).
-const agentDir = process.env.FLEET_AGENT_DIR || path.join(__dirname, 'agent');
+const agentDir = path.join(__dirname, 'agent');
 for (const f of ['fleet-agent.js', 'fleet-agent.service'])
   app.get(`/install/${f}`, (req, res) => res.type(f.endsWith('.js') ? 'application/javascript' : 'text/plain').sendFile(path.join(agentDir, f)));
 
@@ -28,6 +32,12 @@ app.post('/enroll', (req, res) => {
   console.log(`[agent] enrollment code issued to ${req.ip}`);
   res.json(out);
 });
+
+// Optional public file folder (no password, read-only): FLEET_PUBLIC_DIR at FLEET_PUBLIC_PATH.
+if (config.publicDir) {
+  app.get(config.publicPath.slice(0, -1), (req, res, next) => (req.path.endsWith('/') ? next() : res.redirect(302, config.publicPath)));
+  app.use(config.publicPath, publicFiles.router(config.publicDir, config.publicPath));
+}
 
 // Web site: the login page is public, the main page needs a session.
 app.get('/login', (req, res) => res.sendFile(path.join(pub, 'login.html')));
@@ -126,11 +136,22 @@ app.use((err, req, res, next) => {
 db.migrate();
 webAuth.ensureApiKey();
 console.log(`database: ${db.file}`);
+if (config.publicDir) console.log(`public files: ${config.publicDir} at ${config.publicPath}`);
 {
   const every = (ms, fn) => setInterval(() => { try { fn(); } catch (e) { console.error(e); } }, ms).unref();
   every(60 * 60 * 1000, webAuth.prune);
   every(60 * 1000, agent.dropExpiredCodes);
-  // Behind a TLS proxy (see deploy/nginx.conf.example). Overrides: FLEET_HOST, FLEET_PORT.
-  const host = process.env.FLEET_HOST || '127.0.0.1', port = Number(process.env.FLEET_PORT || 3100);
-  agent.attach(app.listen(port, host, () => console.log(`fleet-server on ${host}:${port}`)));
+  const { host, httpsPort, httpPort } = config;
+  const server = https.createServer(tls.load(), app);
+  server.on('error', (e) => { console.error(`HTTPS ${host}:${httpsPort}: ${e.message}`); process.exit(1); });
+  agent.attach(server.listen(httpsPort, host, () => console.log(`fleet-server on https://${host}:${httpsPort}`)));
+  if (httpPort) {
+    // Plain HTTP only redirects to HTTPS (same host name, HTTPS port).
+    const redirect = http.createServer((req, res) => {
+      const hostname = (req.headers.host || '').replace(/:\d+$/, '') || 'localhost';
+      res.writeHead(302, { Location: `https://${hostname}${httpsPort === 443 ? '' : `:${httpsPort}`}${req.url}` }).end();
+    });
+    redirect.on('error', (e) => { console.error(`HTTP ${host}:${httpPort}: ${e.message}`); process.exit(1); });
+    redirect.listen(httpPort, host, () => console.log(`redirecting http://${host}:${httpPort} to HTTPS`));
+  }
 }
