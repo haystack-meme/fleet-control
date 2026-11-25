@@ -57,8 +57,18 @@ fi
 [[ "$FILES_DIR" == - ]] || runuser -u "$USER_NAME" -- test -r "$FILES_DIR" -a -x "$FILES_DIR" ||
   echo "warning: user $USER_NAME can't read $FILES_DIR, so the public files won't be served" >&2
 
+# The unit's sandbox binds these paths in by name (space-separated lists), so they must be plain paths.
+READ_ONLY_PATHS="$APP_DIR"
+[[ "$FILES_DIR" == - ]] || READ_ONLY_PATHS+=" $FILES_DIR"
+paths=("$APP_DIR" "$DATA_DIR" "$NODE")
+[[ "$FILES_DIR" == - ]] || paths+=("$FILES_DIR")
+for p in "${paths[@]}"; do
+  [[ "$p" =~ ^/[^[:space:]#%]*$ ]] || die "the path \"$p\" has a space, # or %, which the service's sandbox settings can't hold: use another folder"
+done
+
 step "writing $UNIT"
 sed -e "s#@APP_DIR@#$APP_DIR#g" -e "s#@NODE@#$NODE#g" -e "s#@USER@#$USER_NAME#g" \
+  -e "s#@DATA_DIR@#$DATA_DIR#g" -e "s#@READ_ONLY_PATHS@#$READ_ONLY_PATHS#g" \
   "$APP_DIR/deploy/fleet-server.service" > "$UNIT"
 chmod 644 "$UNIT"
 systemctl daemon-reload

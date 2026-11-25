@@ -93,6 +93,11 @@ cd /opt/fleet-control && sudo ./install.sh
 data folder (the code stays owned by root), installs and enables the `fleet-server` systemd service (HTTPS on port
 443, port 80 redirects to it), starts it and waits until it answers. It prints the server certificate's fingerprint.
 
+The server runs sandboxed: it only asks agents to do things and needs no privileges of its own beyond ports 80 and
+443, so systemd makes the whole filesystem read-only to it except its `data/` folder, hides `/home` and `/root`,
+and keeps it away from devices, kernel settings and other processes (`systemd-analyze security fleet-server`
+rates it about 1.5 of 10). The agents are not sandboxed: they run your services, as root where you ask for it.
+
 ### 2. Set the password
 
 Open `https://<server>/` right away. With no password set, the page asks you to choose one, and **the first person
@@ -267,11 +272,7 @@ GitHub Actions runs `npm test` on every push and pull request (`.github/workflow
 
 ## Future work
 
-Planned fixes and ideas, roughly in order. Details are in [TODO.md](TODO.md).
-
-**Fixes**
-
-- **Harden the server's systemd unit:** sandboxing (`ProtectSystem=strict` and friends).
+Ideas, roughly in order. Open technical items are in [TODO.md](TODO.md).
 
 **Possible features**
 

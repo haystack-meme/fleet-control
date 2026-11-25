@@ -299,6 +299,22 @@ describe('live: real server, real agents, real systemd', () => {
     assert.equal((await svc('site')).status.running, true);
   });
 
+  it('the server is sandboxed: low exposure, no /home, read-only code, writable data; public files still served', async () => {
+    const score = Number(dx('server', "systemd-analyze security fleet-server.service --no-pager | tail -1 | grep -oE '[0-9]+\\.[0-9]+'"));
+    assert.ok(score > 0 && score <= 3, `exposure ${score}`);
+    const pid = dx('server', 'systemctl show -p MainPID --value fleet-server.service');
+    assert.ok(Number(pid) > 0);
+    // Its own view of the filesystem, through /proc/<pid>/root.
+    assert.equal(dx('server', 'ls -A /home | wc -l') !== '0', true, 'the container has a /home/tester');
+    assert.equal(dx('server', `ls -A /proc/${pid}/root/home | wc -l`), '0', '/home is empty for the server');
+    assert.equal(dx('server', `touch /proc/${pid}/root/opt/fleet-control/x 2>/dev/null && echo writable || echo read-only`), 'read-only');
+    assert.equal(dx('server', `touch /proc/${pid}/root/etc/x 2>/dev/null && echo writable || echo read-only`), 'read-only');
+    assert.equal(dx('server', `touch /proc/${pid}/root/opt/fleet-control/data/x && rm /proc/${pid}/root/opt/fleet-control/data/x && echo writable`), 'writable');
+    dx('server', 'echo sandboxed-but-public > /opt/fleet-control/files/hello.txt');
+    assert.equal((await request(BASE, 'GET', '/files/hello.txt')).text.trim(), 'sandboxed-but-public');
+    assert.equal(dx('server', 'journalctl -u fleet-server --no-pager | grep -ciE "permission denied|EPERM|EACCES" || true'), '0', 'no denied access in its log');
+  });
+
   it('the agents are pinned: a server with a new certificate is refused until they are re-installed', async () => {
     dx('server', 'cd /opt/fleet-control && rm data/tls.crt data/tls.key && systemctl restart fleet-server');
     await until(async () => (await request(BASE, 'GET', '/health').catch(() => null))?.status === 200, { timeoutMs: 30000, what: 'server back' });
