@@ -32,7 +32,7 @@ const EventEmitter = require('node:events');
 const { execFile, execFileSync } = require('node:child_process');
 
 // ---- Node version: must be at least the version this was built with ----
-const MIN_NODE = '22.13.0';
+const MIN_NODE = '26.0.0';
 {
   const cur = process.versions.node.split('.').map(Number), min = MIN_NODE.split('.').map(Number);
   const i = [0, 1, 2].find((k) => cur[k] !== min[k]); // first part that differs (major, minor, patch)

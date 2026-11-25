@@ -24,7 +24,7 @@ Run and manage long-running commands on a fleet of Linux machines from one web p
 
 ## Requirements
 
-- Linux with systemd on every machine, **Node.js 22.13 or newer** at `/usr/local/bin/node`.
+- Linux with systemd on every machine, **Node.js 26 or newer** at `/usr/local/bin/node`.
 - The server also needs `openssl` (to make its certificate on first start) and npm. No database server, web server or
   Docker: the whole server is this one folder.
 

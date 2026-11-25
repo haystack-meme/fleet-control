@@ -11,7 +11,7 @@ There are no automated tests. Add a `node --test` suite (no extra dependencies) 
 - enrollment: code expiry, activation, pending / approved / rejected, name collisions (`box`, `box-2`)
 - the agent's WebSocket frame parser and `--server` argument parsing
 
-Then a GitHub Actions workflow that runs it on every push, on the oldest supported Node (22.13) and the current one.
+Then a GitHub Actions workflow that runs it on every push, on Node 26.
 
 ## Harden the server's systemd unit
 
