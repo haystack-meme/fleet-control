@@ -1,5 +1,7 @@
 # fleet-control
 
+[![test](https://github.com/haystack-meme/fleet-control/actions/workflows/test.yml/badge.svg)](https://github.com/haystack-meme/fleet-control/actions/workflows/test.yml)
+
 ### Every machine, every service, one web page.
 
 You have a few Linux boxes: a GPU server running a model, a desktop with a second card, a couple of small servers in
@@ -243,6 +245,8 @@ curl --cacert fleet.crt -X POST -H "Authorization: Bearer $FLEET_API_KEY" \
 
 ## Tests
 
+GitHub Actions runs `npm test` on every push and pull request (`.github/workflows/test.yml`).
+
 - `npm test`: the whole REST API, end to end. It starts a throwaway server over real HTTPS, and scripted agents
   that speak the real protocol stand in for machines. It covers sign-in, the API key, machines, every service
   action and validation rule, versions and rollback, offline machines, backup and restore, and the public files.
@@ -255,11 +259,10 @@ curl --cacert fleet.crt -X POST -H "Authorization: Bearer $FLEET_API_KEY" \
 
 ## Future work
 
-Planned fixes and ideas, roughly in order. Details for the first two are in [TODO.md](TODO.md).
+Planned fixes and ideas, roughly in order. Details are in [TODO.md](TODO.md).
 
 **Fixes**
 
-- **CI:** a GitHub Actions workflow that runs `npm test` on every push.
 - **Harden the server's systemd unit:** sandboxing (`ProtectSystem=strict` and friends).
 
 **Possible features**

@@ -1,10 +1,10 @@
 # To do
 
-## CI
+## Agent unit tests
 
-`npm test` covers the REST API end to end (`test/api.test.js`) and `sudo npm run test:live` runs the real thing in
-Docker (`test/live/`). Still missing: a GitHub Actions workflow that runs `npm test` on every push (Node 26), and
-unit tests for the agent's WebSocket frame parser and `--server` argument parsing.
+`npm test` (also run by GitHub Actions on every push) covers the REST API end to end, and `sudo npm run test:live`
+runs the real thing in Docker. Still missing: unit tests for the agent's WebSocket frame parser, its `--server`
+argument parsing and its unit-file quoting (covered only indirectly by the live test).
 
 ## Harden the server's systemd unit
 
