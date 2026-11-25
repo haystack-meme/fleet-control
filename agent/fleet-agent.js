@@ -194,11 +194,17 @@ const ops = {
     await must('systemd-run', [...args, '--', '/bin/bash', '-c', command]);
     console.log(`[agent] started ${unit}`);
   },
-  // Waits as long as the unit takes to stop (its TimeoutStopSec, default 90 s), up to STOP_TIMEOUT_MS.
-  async stop({ unit }) {
-    await must('systemctl', ['stop', '--', unitOf(unit)], [0, 5], { timeoutMs: STOP_TIMEOUT_MS }); // 5 = not loaded, already stopped
-    await exec('systemctl', ['reset-failed', '--', unit]);
-    console.log(`[agent] stopped ${unit}`);
+  // wait (default): returns once the unit has stopped (it takes up to its TimeoutStopSec), at most STOP_TIMEOUT_MS.
+  // wait: false: returns at once; the stop goes on here (the unit shows as deactivating until it is done).
+  async stop({ unit, wait = true }) {
+    unitOf(unit);
+    const done = (async () => {
+      await must('systemctl', ['stop', '--', unit], [0, 5], { timeoutMs: STOP_TIMEOUT_MS }); // 5 = not loaded, already stopped
+      await exec('systemctl', ['reset-failed', '--', unit]);
+      console.log(`[agent] stopped ${unit}`);
+    })();
+    if (wait) return done;
+    done.catch((e) => console.log(`[agent] stopping ${unit} failed: ${e.message}`));
   },
   async logs({ unit, lines }) {
     const n = Math.min(Math.max(parseInt(lines, 10) || 200, 1), 5000);

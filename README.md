@@ -83,6 +83,10 @@ Run the same command again to update the agent; it keeps its key while the serve
 - The agent runs as root and only manages units named `fleet-<name>.service`. Starting a service runs
   `systemd-run --unit=fleet-<name>.service -p User=… -- /bin/bash -c <command>` on its machine.
 - Services are transient: after a machine reboots they are stopped until started again from the page.
+- Stop, restart and delete answer at once: the page shows *stopping…* / *restarting…* and updates every 1.5 s until
+  the service settles. A restart (stop, then start from the current definition) runs on the server in the background;
+  if it fails, the error is shown on the service. A service that doesn't stop within 15 s is killed; set
+  `TimeoutStopSec=` in its properties if it needs longer to shut down.
 - The server stores only a hash of each machine key and of each session cookie. All data lives in one SQLite file
   (`data/fleet.db`); back it up with **Download backup** on the page (safe while the server
   runs) and restore it with **Restore…**. The file is gzip(database) followed by the SHA-256 of the gzip bytes; the plain

@@ -185,9 +185,14 @@ function newMachinesHtml() {
       '<button class="danger" data-remove-machine="' + esc(m.name) + '">Remove</button></div></div>').join('') + '</section>';
 }
 
-function stateText(st) {
+// A service is changing state: restarting (the server's background restart) or systemd starting / stopping it.
+const TRANSIENT = { activating: 'starting…', deactivating: 'stopping…', reloading: 'reloading…' };
+const busy = (s) => !!(s.restarting || TRANSIENT[(s.status || {}).active]);
+function stateText(st, s) {
   if (!st) return '';
   if (st.error) return '<span class="err">' + esc(st.error) + '</span>';
+  if (s.restarting) return '<b>restarting…</b>';
+  if (TRANSIENT[st.active]) return '<b>' + TRANSIENT[st.active] + '</b>';
   let t = esc(st.active) + (st.sub && st.sub !== st.active ? ' (' + esc(st.sub) + ')' : '');
   if (st.running && st.pid) t += ' · pid ' + st.pid;
   if (st.running && st.since) t += ' · since ' + esc(isNaN(Date.parse(st.since)) ? st.since : new Date(st.since).toLocaleString());
@@ -201,11 +206,12 @@ function dotClass(st) {
 }
 
 function svcHtml(s) {
-  const st = s.status || {}, run = st.running, unknown = !!st.error, open = openCmds.has(s.name);
+  const st = s.status || {}, run = st.running, unknown = !!st.error || busy(s), open = openCmds.has(s.name);
   return '<div class="svc" data-name="' + esc(s.name) + '">' +
     '<div class="svc-top"><div><span class="dot ' + esc(dotClass(st)) + '"></span><b>' + esc(s.name) + '</b><span class="ver">v' + s.version + '</span>' +
       (s.description ? '<div class="mut">' + esc(s.description) + '</div>' : '') + '</div>' +
-    '<div class="mut" style="font-size:14px">' + stateText(st) + '</div></div>' +
+    '<div class="mut" style="font-size:14px">' + stateText(st, s) + '</div></div>' +
+    (s.last_error ? '<div class="err" style="font-size:14px">' + esc(s.last_error.message) + ' <span class="mut">(' + esc(new Date(s.last_error.at).toLocaleTimeString()) + ')</span></div>' : '') +
     '<code class="cmd' + (open ? ' open' : '') + '" data-cmd tabindex="0" role="button" aria-expanded="' + open + '">' + hlBash(s.command) + '</code>' +
     '<div class="acts">' +
     '<button data-act="start" ' + (run || unknown ? 'disabled' : '') + '>Start</button>' +
@@ -267,8 +273,12 @@ function render() {
   for (const n of openHist) loadHist(n);
 }
 
+// While any service is starting / stopping / restarting, check again every 1.5 s until it settles.
+let fastTimer = null;
 async function loadServices() {
   services = await api('/api/services');
+  clearTimeout(fastTimer);
+  if (services.some(busy)) fastTimer = setTimeout(() => { if (!$('dlg').open) loadServices().catch(() => {}); }, 1500);
   for (const set of [openLogs, openHist]) for (const n of [...set]) if (!services.some((s) => s.name === n)) set.delete(n);
   for (const n of [...openCmds]) if (!services.some((s) => s.name === n)) openCmds.delete(n);
   saveOpenCmds();

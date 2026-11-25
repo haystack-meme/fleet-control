@@ -101,7 +101,7 @@ app.post('/api/services', async (req, res) => res.status(201).json(await service
 app.get('/api/services/:name', async (req, res) => {
   const svc = await services.get(req.params.name);
   try { svc.status = await services.status(svc); } catch (e) { svc.status = { error: e.message }; }
-  res.json(svc);
+  res.json(services.withState(svc));
 });
 app.put('/api/services/:name', async (req, res) => res.json(await services.update(req.params.name, req.body || {})));
 // ?force=1: delete even if its machine can't be reached (the unit may still be running there).
