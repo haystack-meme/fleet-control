@@ -3,4 +3,4 @@ FROM nginx:1.30.8-alpine
 RUN apk add --no-cache openssl
 COPY docker/selfsigned-cert.sh /docker-entrypoint.d/10-selfsigned-cert.sh
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
-RUN chmod +x /docker-entrypoint.d/10-selfsigned-cert.sh
+RUN chmod +x /docker-entrypoint.d/10-selfsigned-cert.sh && mkdir -p /etc/nginx/fleet.d

@@ -39,7 +39,8 @@ docker compose exec server node bin/admin.js default-user <user>   # Linux user 
 ```
 
 Then open `https://<server>/` and sign in. Data lives in the `db` volume, the certificate in `certs`. Ports and the
-certificate's names can be set in `.env`. Only the server runs in Docker: the agents run directly on each machine
+certificate's names can be set in `.env`. To add your own nginx locations to the proxy (for example a public file
+folder), put them in a `compose.override.yaml` (git-ignored) that mounts `*.conf` files into `/etc/nginx/fleet.d/`. Only the server runs in Docker: the agents run directly on each machine
 (see [Adding a machine](#adding-a-machine)).
 
 ## Server setup without Docker
