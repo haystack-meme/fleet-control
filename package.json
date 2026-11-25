@@ -1,0 +1,19 @@
+{
+  "name": "fleet-control",
+  "version": "1.0.0",
+  "description": "Run and manage systemd services on a fleet of Linux machines from one web page",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=26.13.1"
+  },
+  "dependencies": {
+    "express": "5.3.0",
+    "mysql2": "3.24.6",
+    "ws": "8.22.1"
+  }
+}
