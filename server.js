@@ -17,7 +17,9 @@ const backup = require('./lib/backup');
 const pub = path.join(__dirname, 'public');
 const app = express();
 app.disable('x-powered-by');
-app.use(express.json());
+// JSON bodies everywhere except /api/restore, which takes the backup file as it is (whatever its Content-Type says).
+const json = express.json();
+app.use((req, res, next) => (req.path === '/api/restore' ? next() : json(req, res, next)));
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
