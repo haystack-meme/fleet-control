@@ -40,13 +40,22 @@ step "installing npm packages"
 (cd "$APP_DIR" && npm ci --omit=dev --no-audit --no-fund --loglevel=error)
 
 # Settings (.env) as the server will see them; this also checks them.
-read -r DATA_DIR HTTPS_PORT HOST < <(cd "$APP_DIR" && runuser -u "$USER_NAME" -- "$NODE" -e \
-  'const c = require("./lib/config"); console.log(c.dataDir, c.httpsPort, c.host)' 2>/dev/null) ||
+read -r DATA_DIR HTTPS_PORT HOST HTTP_PORT FILES_DIR FILES_PATH < <(cd "$APP_DIR" && runuser -u "$USER_NAME" -- "$NODE" -e \
+  'const c = require("./lib/config"); console.log(c.dataDir, c.httpsPort, c.host, c.httpPort, c.filesDir || "-", c.filesPath)' 2>/dev/null) ||
   die "bad settings in $APP_DIR/.env: $(cd "$APP_DIR" && "$NODE" -e 'try { require("./lib/config") } catch (e) { console.log(e.message) }')"
 
 step "data folder $DATA_DIR (owned by $USER_NAME)"
 install -d -m 700 -o "$USER_NAME" -g "$USER_NAME" "$DATA_DIR"
 chown -R "$USER_NAME:$USER_NAME" "$DATA_DIR"
+
+if [[ "$FILES_DIR" != - && ! -d "$FILES_DIR" ]]; then
+  # The public file folder: owned by whoever ran sudo, so they can drop files in without sudo; the server only reads it.
+  owner="${SUDO_USER:-root}"
+  step "public file folder $FILES_DIR (owned by $owner)"
+  install -d -m 755 -o "$owner" -g "$(id -gn "$owner")" "$FILES_DIR"
+fi
+[[ "$FILES_DIR" == - ]] || runuser -u "$USER_NAME" -- test -r "$FILES_DIR" -a -x "$FILES_DIR" ||
+  echo "warning: user $USER_NAME can't read $FILES_DIR, so the public files won't be served" >&2
 
 step "writing $UNIT"
 sed -e "s#@APP_DIR@#$APP_DIR#g" -e "s#@NODE@#$NODE#g" -e "s#@USER@#$USER_NAME#g" \
@@ -76,6 +85,7 @@ fleet-server is running and enabled at boot.
   Page:        https://<this machine's IP>$port_suffix/   (set the password there now: the first visitor sets it)
   Certificate: SHA-256 ${fp:-?}
                (agents print the fingerprint they pin on --install; it should match this)
+$( [[ "$FILES_DIR" == - ]] || echo "  Public files: put them in $FILES_DIR; anyone can browse them at https://<this machine's IP>$port_suffix$FILES_PATH$( [[ "$HTTP_PORT" == 0 ]] || echo " (and http://<IP>$( [[ "$HTTP_PORT" == 80 ]] || echo ":$HTTP_PORT")$FILES_PATH)")" )
   Logs:        journalctl -u fleet-server
   Update:      cd $APP_DIR && sudo git pull && sudo ./install.sh
 EOF

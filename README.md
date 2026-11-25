@@ -38,6 +38,10 @@ click Start, and it runs there as a proper systemd service. You don't log in to 
 - **Tiny and dependency-light.** The server is one Node.js folder with two npm packages (`express`, `ws`) and its
   data in a single SQLite file built into Node. There's no database server, no Docker and no reverse proxy. The
   agent is **one JavaScript file** that uses only Node's built-in modules.
+- **A public file drop, built in.** Put files in the server's `files/` folder and anyone on your network can browse
+  and download them at `/files/`, over HTTPS or plain HTTP, with no password. It's handy for scripts, installers,
+  models or anything else every machine needs to `curl`. The browsable index has folders, sizes, dates, sorting and
+  download links.
 - **Backup and restore from the browser.** Download the whole database as one file and upload it to restore.
 - **Scriptable.** Everything on the page is also a JSON API with an API key.
 
@@ -60,8 +64,10 @@ Read this before installing.
   so do it on a network you trust.
 - **Services don't start at boot.** They are transient systemd units: after a machine reboots, its services stay
   stopped until you start them from the page.
-- **The public file folder is unauthenticated.** If you set `FLEET_PUBLIC_DIR`, anyone who can reach the server can
-  read everything in it. Don't put HTML files there (see *Future work*).
+- **The public file folder is public.** Anyone who can reach the server can list and download everything in
+  `files/`, including over unencrypted HTTP. Only put things there you'd hand to anyone on the network. (Hidden
+  files and folders, whose names start with `.`, are never served. HTML files open sandboxed, so they can't act as
+  the signed-in page. Set `FLEET_FILES_DIR=off` to turn the feature off.)
 - **No warranty.** This is a small personal project, provided "as is" under the Apache-2.0 license. It has no
   automated test suite yet. Back up your data (**Download backup**) and test it before relying on it.
 
@@ -114,6 +120,8 @@ Click **New service**, then fill in a name, the machine, the command and the use
 - **Back up:** **Download backup** on the page (safe while the server runs). Restore with **Restore…**.
 - **Update the server:** `cd /opt/fleet-control && sudo git pull && sudo ./install.sh`
 - **Update an agent:** run the same `--install` command again. It keeps its key while the server still accepts it.
+- **Share a file:** copy it into `/opt/fleet-control/files/` (subfolders work too). It's available at once at
+  `http://<server>/files/` and `https://<server>/files/`, and from the **Public files** button on the page.
 - **Logs:** `journalctl -u fleet-server` on the server, `journalctl -u fleet-agent` on a machine, **Logs** on the
   page for a service.
 
@@ -128,10 +136,12 @@ after changing them:
 | `FLEET_HTTP_PORT` | `80` | only redirects to HTTPS; `0` turns it off |
 | `FLEET_HOST` | `0.0.0.0` | address to listen on |
 | `FLEET_DATA_DIR` | `data` | where `fleet.db` and the certificate live |
-| `FLEET_PUBLIC_DIR` | | a folder anyone can read without a password (file index, read-only) ... |
-| `FLEET_PUBLIC_PATH` | `/files/` | ... at this path |
+| `FLEET_FILES_DIR` | `files` | the public file folder, browsable by anyone without a password; `off` turns it off ... |
+| `FLEET_FILES_PATH` | `/files/` | ... at this path (over HTTPS, and over HTTP unless `FLEET_HTTP_PORT=0`) |
 
 Everything the server keeps is in `data/`: the database `fleet.db` and the HTTPS certificate `tls.crt` + `tls.key`.
+The public files are in `files/`. `install.sh` creates that folder owned by the user who ran `sudo`, so you can
+drop files in without sudo.
 The certificate is made on first start for the machine's hostname and IP addresses. To use your own, replace those
 two files and restart (then re-install the agents; see below).
 
@@ -188,8 +198,6 @@ Planned fixes and ideas, roughly in order. Details for the first two are in [TOD
 
 - **Tests and CI:** a `node --test` suite and a GitHub Actions workflow.
 - **Harden the server's systemd unit:** sandboxing (`ProtectSystem=strict` and friends).
-- **Public files on their own origin:** serve `FLEET_PUBLIC_DIR` as downloads (or on a separate port) so an HTML
-  file there can't act as the signed-in page.
 - **Cap the size of restored backups** when they are decompressed.
 - **Deleting a service waits for it to stop**, so a stop that fails on the machine can't leave it running untracked.
 

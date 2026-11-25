@@ -31,5 +31,5 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 ```
 
-(plus `ReadOnlyPaths=` for `FLEET_PUBLIC_DIR` if it is set). Check that first-start certificate creation with
+(plus `ReadOnlyPaths=` for the public file folder, `FLEET_FILES_DIR`). Check that first-start certificate creation with
 `openssl` still works under it.

@@ -1,13 +1,14 @@
 'use strict';
 // fleet-server: the web page, the API and the agents' WebSocket, over HTTPS (port 443; port 80 only redirects).
 // Settings: see lib/config.js (environment or .env). Data: data/fleet.db + data/tls.crt/.key.
+const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const https = require('node:https');
 const express = require('express');
 const config = require('./lib/config');
 const tls = require('./lib/tls');
-const publicFiles = require('./lib/public-files');
+const files = require('./lib/files');
 const agent = require('./lib/agent');
 const db = require('./lib/db');
 const webAuth = require('./lib/web-auth');
@@ -35,11 +36,8 @@ app.post('/enroll', (req, res) => {
   res.json(out);
 });
 
-// Optional public file folder (no password, read-only): FLEET_PUBLIC_DIR at FLEET_PUBLIC_PATH.
-if (config.publicDir) {
-  app.get(config.publicPath.slice(0, -1), (req, res, next) => (req.path.endsWith('/') ? next() : res.redirect(302, config.publicPath)));
-  app.use(config.publicPath, publicFiles.router(config.publicDir, config.publicPath));
-}
+// The public file folder (no password, read-only, browsable): FLEET_FILES_DIR at FLEET_FILES_PATH (also over HTTP).
+if (config.filesDir) files.mountOn(app, config.filesDir, config.filesPath);
 
 // Web site: the login page is public, the main page needs a session.
 app.get('/login', (req, res) => res.sendFile(path.join(pub, 'login.html')));
@@ -58,6 +56,9 @@ app.post('/api/api-key/reroll', (req, res) => {
   console.log(`[auth] API key rerolled from ${req.ip}`);
   res.json({ key });
 });
+
+// What the page needs to know about the server's settings.
+app.get('/api/config', (req, res) => res.json({ files_path: config.filesDir ? config.filesPath : null }));
 
 // Change the web password (needs the current one; signs out every other session).
 app.post('/api/password', webAuth.changePassword);
@@ -138,7 +139,10 @@ app.use((err, req, res, next) => {
 db.migrate();
 webAuth.ensureApiKey();
 console.log(`database: ${db.file}`);
-if (config.publicDir) console.log(`public files: ${config.publicDir} at ${config.publicPath}`);
+if (config.filesDir) {
+  try { fs.mkdirSync(config.filesDir, { recursive: true }); } catch (e) { console.error(`public files: can't create ${config.filesDir}: ${e.message}`); }
+  console.log(`public files: ${config.filesDir} at ${config.filesPath} (HTTPS${config.httpPort ? ' and HTTP' : ''})`);
+}
 {
   const every = (ms, fn) => setInterval(() => { try { fn(); } catch (e) { console.error(e); } }, ms).unref();
   every(60 * 60 * 1000, webAuth.prune);
@@ -148,11 +152,15 @@ if (config.publicDir) console.log(`public files: ${config.publicDir} at ${config
   server.on('error', (e) => { console.error(`HTTPS ${host}:${httpsPort}: ${e.message}`); process.exit(1); });
   agent.attach(server.listen(httpsPort, host, () => console.log(`fleet-server on https://${host}:${httpsPort}`)));
   if (httpPort) {
-    // Plain HTTP only redirects to HTTPS (same host name, HTTPS port).
-    const redirect = http.createServer((req, res) => {
+    // Plain HTTP serves the public files; everything else redirects to HTTPS (same host name, HTTPS port).
+    const plain = express();
+    plain.disable('x-powered-by');
+    if (config.filesDir) files.mountOn(plain, config.filesDir, config.filesPath);
+    plain.use((req, res) => {
       const hostname = (req.headers.host || '').replace(/:\d+$/, '') || 'localhost';
-      res.writeHead(302, { Location: `https://${hostname}${httpsPort === 443 ? '' : `:${httpsPort}`}${req.url}` }).end();
+      res.redirect(302, `https://${hostname}${httpsPort === 443 ? '' : `:${httpsPort}`}${req.originalUrl}`);
     });
+    const redirect = http.createServer(plain);
     redirect.on('error', (e) => { console.error(`HTTP ${host}:${httpPort}: ${e.message}`); process.exit(1); });
     redirect.listen(httpPort, host, () => console.log(`redirecting http://${host}:${httpPort} to HTTPS`));
   }
