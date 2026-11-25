@@ -78,6 +78,12 @@ It enrolls (one-time code, valid for 1 minute, becomes the machine's key in `/et
 
 Run the same command again to update the agent; it keeps its key while the server still accepts it.
 
+The agent is pinned to its server: the first `--install` saves the SHA-256 fingerprint of the server's certificate
+in `/etc/fleet-agent/server` (it prints it; compare with `openssl x509 -in data/tls.crt -noout -fingerprint -sha256`
+on the server if you like), and from then on the agent only talks to a server presenting that certificate. If you
+replace the server's certificate on purpose, delete `/etc/fleet-agent/server` on each machine and run `--install`
+again. (The very first download of `fleet-agent.js` with `curl -k` isn't checked; everything after it is.)
+
 ## How it works
 
 - The agent runs as root and only manages units named `fleet-<name>.service`. Starting a service runs
@@ -130,7 +136,7 @@ This is built for a trusted home or lab network:
 - The web password and the API key are the only protection for the page and API. Anyone who signs in, or has the
   key, can run any command, as any user (including root), on every approved machine.
 - Anyone who can reach the server can enroll a machine; it does nothing until approved.
-- Agents encrypt their connection but don't verify the server's certificate.
+- Agents trust the server certificate they see on their first install (pinned from then on).
 
 Don't expose it to the internet.
 
