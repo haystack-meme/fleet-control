@@ -137,7 +137,7 @@ after changing them:
 | Name | Default | |
 |---|---|---|
 | `FLEET_HTTPS_PORT` | `443` | if you change it, give agents `--server <ip>:<port>` |
-| `FLEET_HTTP_PORT` | `80` | only redirects to HTTPS; `0` turns it off |
+| `FLEET_HTTP_PORT` | `80` | plain HTTP: serves the public files, redirects everything else to HTTPS; `0` turns it off |
 | `FLEET_HOST` | `0.0.0.0` | address to listen on |
 | `FLEET_DATA_DIR` | `data` | where `fleet.db` and the certificate live |
 | `FLEET_FILES_DIR` | `files` | the public file folder, browsable by anyone without a password; `off` turns it off ... |
@@ -169,8 +169,9 @@ two files and restart (then re-install the agents; see below).
 - **Certificate pinning:** the first `--install` saves the SHA-256 fingerprint of the server's certificate in
   `/etc/fleet-agent/server`, and from then on the agent only talks to a server presenting that certificate. If you
   replace the certificate on purpose, delete that file on each machine and run `--install` again.
-- **Stop, restart and delete** answer at once unless you ask them to wait (see the API). The page shows
-  *stopping…* / *restarting…* / *not ready yet* until the service settles. A service that doesn't stop within 15 s
+- **Stop and restart** answer at once unless you ask them to wait (see the API); **delete** always waits until the
+  service has stopped, so it never leaves anything running. The page shows *stopping…* / *restarting…* /
+  *not ready yet* until the service settles. A service that doesn't stop within 15 s
   is killed; set `TimeoutStopSec=` in its properties if it needs longer.
 - **One action at a time per service:** simultaneous requests for the same service run in order (two starts give
   one start and one `"changed": false`), and while a request waits for a service, other actions on it get
@@ -190,11 +191,13 @@ curl -k -H "Authorization: Bearer $FLEET_API_KEY" https://<server>/api/services
 
 | Method | Path | |
 |---|---|---|
+| POST | `/login`, `/logout` | sign in with `{"password": "…"}` (sets the session cookie) / sign out |
+| GET | `/login/status` | `{"password_set": true}`; false on a new install (then the first `/login` sets it) |
 | GET | `/api/machines` | machines with status (pending / approved / rejected), online, stats |
 | POST | `/api/machines/{name}/approve`, `/reject` | decide on a machine |
 | DELETE | `/api/machines/{name}` | remove a machine and its key |
 | GET, POST | `/api/services` | list (with live status) / create |
-| GET, PUT, DELETE | `/api/services/{name}` | read / save (new version) / delete (`?force=1` if its machine is unreachable) |
+| GET, PUT, DELETE | `/api/services/{name}` | read / save (new version) / delete: stops it first and waits for that (`?force=1` deletes it from the database only, if its machine is unreachable) |
 | POST | `/api/services/{name}/start`, `/stop`, `/restart` | control (`?wait=1&timeout=<s>`, see below) |
 | GET | `/api/services/{name}/logs?lines=200` | journal |
 | GET | `/api/services/{name}/versions` | history |
@@ -202,6 +205,7 @@ curl -k -H "Authorization: Bearer $FLEET_API_KEY" https://<server>/api/services
 | GET | `/api/api-key` | `{"key": "…"}`: the current API key |
 | POST | `/api/api-key/reroll` | make a new key (`{"key": "…"}`); the old one stops working at once |
 | POST | `/api/password` | `{"current": "…", "password": "…"}`: change the web password; signs out every other session |
+| GET | `/api/config` | `{"files_path": "/files/"}` (null if the public file folder is off) |
 | GET | `/api/backup` | backup file `fleet-<UTC time>.fleetbackup` |
 | POST | `/api/restore` | body = a backup file exactly as downloaded (refused if changed): replaces machines, settings (incl. the password), services and their history; sessions are kept |
 
@@ -223,6 +227,8 @@ it has stopped. `&timeout=<seconds>` (1–1800, default 120) limits the wait. If
 starting, the answer is `502 start_failed`; if it isn't ready in time, `504 not_ready` (it is left running). Both
 include its recent `logs`. To switch a GPU from one service to another, give each `Conflicts=fleet-<other>.service`
 and start the one you want with `?wait=1`: systemd stops the other first, and the answer means the new one works.
+
+`fleet.crt` here is a copy of the server's `data/tls.crt`, so the certificate is checked (`-k` would skip that).
 
 ```sh
 curl --cacert fleet.crt -X POST -H "Authorization: Bearer $FLEET_API_KEY" \
@@ -249,12 +255,14 @@ GitHub Actions runs `npm test` on every push and pull request (`.github/workflow
 
 - `npm test`: the whole REST API, end to end. It starts a throwaway server over real HTTPS, and scripted agents
   that speak the real protocol stand in for machines. It covers sign-in, the API key, machines, every service
-  action and validation rule, versions and rollback, offline machines, backup and restore, and the public files.
-  It needs no root and takes about a second.
+  action and validation rule, health checks and waiting (`?wait=1`), simultaneous requests, versions and rollback,
+  offline machines, backup and restore (including upgrading older databases and backups), error codes and the
+  public files. It needs no root and takes about 15 seconds.
 - `sudo npm run test:live` (needs Docker): the real thing. It builds a fleet-server container with `install.sh`
   and three systemd containers enrolled with the real `fleet-agent --install`, then checks inside them what each
-  API call actually did: users, folders, environment, restart policies, Conflicts=, stop timeouts, a machine
-  rebooting, the server restarting, backup and restore, and certificate pinning. Afterwards it removes every
+  API call actually did: users, folders, environment, the exact command bytes reaching bash, restart policies,
+  health checks and waiting, crashes while starting, stop timeouts, switching back and forth between two services
+  with `Conflicts=`, a machine rebooting, the server restarting, backup and restore, and certificate pinning. Afterwards it removes every
   container (`KEEP=1` leaves them running).
 
 ## Future work
