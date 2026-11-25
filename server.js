@@ -22,8 +22,8 @@ for (const f of ['fleet-agent.js', 'fleet-agent.service'])
   app.get(`/install/${f}`, (req, res) => res.type(f.endsWith('.js') ? 'application/javascript' : 'text/plain').sendFile(path.join(agentDir, f)));
 
 // Public: `fleet-agent.js --install` gets its code here (valid 1 minute; the agent's first hello makes it its key).
-app.post('/enroll', async (req, res) => {
-  const out = await agent.enroll();
+app.post('/enroll', (req, res) => {
+  const out = agent.enroll();
   console.log(`[agent] enrollment code issued to ${req.ip}`);
   res.json(out);
 });
@@ -32,15 +32,15 @@ app.post('/enroll', async (req, res) => {
 app.get('/login', (req, res) => res.sendFile(path.join(pub, 'login.html')));
 app.post('/login', webAuth.login);
 app.post('/logout', webAuth.logout);
-app.get('/', async (req, res) => (await webAuth.valid(req)) ? res.sendFile(path.join(pub, 'index.html')) : res.redirect(302, '/login'));
+app.get('/', (req, res) => webAuth.valid(req) ? res.sendFile(path.join(pub, 'index.html')) : res.redirect(302, '/login'));
 
 // API: needs a signed-in web session (the password is the only security).
-app.use('/api', async (req, res, next) => ((await webAuth.valid(req)) ? next() : res.status(401).json({ error: 'sign in first' })));
+app.use('/api', (req, res, next) => (webAuth.valid(req) ? next() : res.status(401).json({ error: 'sign in first' })));
 
 // Machines: is the agent connected (online)? + the latest stats it pushed.
 // status: pending (new, waiting for the user) | approved | rejected; stats only for approved machines.
-app.get('/api/machines', async (req, res) => {
-  res.json(Object.entries(await db.machines()).map(([name, m]) => {
+app.get('/api/machines', (req, res) => {
+  res.json(Object.entries(db.machines()).map(([name, m]) => {
     const c = agent.state(name), out = { name, address: m.address, status: m.status, online: !!c };
     if (c && m.status === 'approved') out.stats = c.stats;
     return out;
@@ -49,31 +49,30 @@ app.get('/api/machines', async (req, res) => {
 
 // Approve / reject a machine. Rejected stays rejected until approved.
 for (const [action, status] of [['approve', 'approved'], ['reject', 'rejected']])
-  app.post(`/api/machines/:name/${action}`, async (req, res) => {
+  app.post(`/api/machines/:name/${action}`, (req, res) => {
     if (status === 'rejected') {
-      const [[{ n }]] = await db.pool.query('SELECT COUNT(*) AS n FROM services s JOIN machines m ON m.id = s.machine_id WHERE m.name=?', [req.params.name]);
+      const { n } = db.get('SELECT COUNT(*) AS n FROM services s JOIN machines m ON m.id = s.machine_id WHERE m.name = ?', req.params.name);
       if (n) return res.status(409).json({ error: `${req.params.name} has ${n} service${n === 1 ? '' : 's'}: delete or move them before rejecting it` });
     }
-    const [r] = await db.pool.query("UPDATE machines SET status=?, decided_at=UTC_TIMESTAMP() WHERE name=? AND activated_at IS NOT NULL",
-      [status, req.params.name]);
-    if (!r.affectedRows) return res.status(404).json({ error: 'no such machine' });
+    const r = db.run(`UPDATE machines SET status = ?, decided_at = ${db.NOW} WHERE name = ? AND activated_at IS NOT NULL`, status, req.params.name);
+    if (!r.changes) return res.status(404).json({ error: 'no such machine' });
     console.log(`[agent] ${req.params.name} ${status}`);
     res.json({ ok: true, status });
   });
 
 // Remove a machine (and its key). Refused while it still has services.
-app.delete('/api/machines/:name', async (req, res) => {
-  const [[m]] = await db.pool.query('SELECT id FROM machines WHERE name=? AND activated_at IS NOT NULL', [req.params.name]);
+app.delete('/api/machines/:name', (req, res) => {
+  const m = db.get('SELECT id FROM machines WHERE name = ? AND activated_at IS NOT NULL', req.params.name);
   if (!m) return res.status(404).json({ error: 'no such machine' });
-  const [[{ n }]] = await db.pool.query('SELECT COUNT(*) AS n FROM services WHERE machine_id=?', [m.id]);
+  const { n } = db.get('SELECT COUNT(*) AS n FROM services WHERE machine_id = ?', m.id);
   if (n) return res.status(409).json({ error: `${req.params.name} still has ${n} service${n === 1 ? '' : 's'}: delete or move them first` });
-  await db.pool.query('DELETE FROM machines WHERE id=?', [m.id]);
+  db.run('DELETE FROM machines WHERE id = ?', m.id);
   agent.kick(req.params.name);
   console.log(`[agent] ${req.params.name} removed`);
   res.json({ ok: true });
 });
 
-// Services (definitions in MariaDB, run on each machine by its fleet-agent).
+// Services (definitions in the database, run on each machine by its fleet-agent).
 app.get('/api/services', async (req, res) => res.json(await services.listWithStatus()));
 app.post('/api/services', async (req, res) => res.status(201).json(await services.create(req.body || {})));
 app.get('/api/services/:name', async (req, res) => {
@@ -96,10 +95,13 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: err.message, ...(err.canForce && { can_force: true }) });
 });
 
-db.migrate().then(() => {
-  setInterval(() => webAuth.prune().catch(console.error), 60 * 60 * 1000).unref();
-  setInterval(() => agent.dropExpiredCodes().catch(console.error), 60 * 1000).unref();
+db.migrate();
+console.log(`database: ${db.file}`);
+{
+  const every = (ms, fn) => setInterval(() => { try { fn(); } catch (e) { console.error(e); } }, ms).unref();
+  every(60 * 60 * 1000, webAuth.prune);
+  every(60 * 1000, agent.dropExpiredCodes);
   // Behind a TLS proxy (see deploy/nginx.conf.example). Overrides: FLEET_HOST, FLEET_PORT.
   const host = process.env.FLEET_HOST || '127.0.0.1', port = Number(process.env.FLEET_PORT || 3100);
   agent.attach(app.listen(port, host, () => console.log(`fleet-server on ${host}:${port}`)));
-}).catch((err) => { console.error('database not ready:', err.message); process.exit(1); });
+}

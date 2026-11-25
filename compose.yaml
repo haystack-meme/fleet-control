@@ -1,39 +1,19 @@
-# fleet-control with Docker: MariaDB + fleet-server + an HTTPS proxy.
-#   cp .env.example .env   (then set FLEET_DB_PASSWORD, e.g. to the output of `openssl rand -hex 24`)
+# fleet-control with Docker: fleet-server + an HTTPS proxy.
 #   docker compose up -d
 #   docker compose exec server node bin/admin.js password '<your password>'
 #   docker compose exec server node bin/admin.js default-user <user>
+# Optional settings (ports, certificate names) go in .env; see .env.example.
 # The agents run directly on each machine (they control its systemd), not in Docker.
 name: fleet
 
 services:
-  db:
-    image: mariadb:11.8.8-noble
-    restart: unless-stopped
-    environment:
-      MARIADB_DATABASE: fleet
-      MARIADB_USER: fleet
-      MARIADB_PASSWORD: ${FLEET_DB_PASSWORD:?set FLEET_DB_PASSWORD in .env}
-      MARIADB_RANDOM_ROOT_PASSWORD: "1"
-    volumes:
-      - db:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-
   server:
     build: .
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
     environment:
-      FLEET_DB_HOST: db
-      FLEET_DB_USER: fleet
-      FLEET_DB_PASSWORD: ${FLEET_DB_PASSWORD:?set FLEET_DB_PASSWORD in .env}
       FLEET_TRUST_PROXY: uniquelocal
+    volumes:
+      - data:/app/data            # the SQLite database, fleet.db
 
   proxy:
     build:
@@ -51,5 +31,5 @@ services:
       - certs:/etc/nginx/certs
 
 volumes:
-  db:
+  data:
   certs:

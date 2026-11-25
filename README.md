@@ -2,7 +2,7 @@
 
 Run and manage long-running commands on a fleet of Linux machines from one web page.
 
-- **fleet-server** (Node.js + MariaDB) keeps the service definitions, their full version history and the list of
+- **fleet-server** (Node.js, with its data in one SQLite file via Node's built-in `node:sqlite`) keeps the service definitions, their full version history and the list of
   machines, and serves the web page.
 - **fleet-agent** is one self-contained JavaScript file (Node built-ins only) on every machine. It connects **out** to
   the server over an encrypted WebSocket, so machines need no open ports, and it starts and stops services as
@@ -23,25 +23,24 @@ Run and manage long-running commands on a fleet of Linux machines from one web p
 ## Requirements
 
 - Linux with systemd on every machine, **Node.js 26.13.1 or newer** at `/usr/local/bin/node`.
-- The server: either Docker with Compose, or MariaDB (10.11+) plus a TLS reverse proxy such as nginx.
+- The server: either Docker with Compose, or Node.js plus a TLS reverse proxy such as nginx. No database server is needed.
 
 ## Quick start with Docker
 
-Runs MariaDB, fleet-server and an HTTPS proxy (with a self-signed certificate made on first start):
+Runs fleet-server and an HTTPS proxy (with a self-signed certificate made on first start):
 
 ```sh
 git clone https://github.com/haystack-meme/fleet-control.git && cd fleet-control
-cp .env.example .env
-sed -i "s/^FLEET_DB_PASSWORD=.*/FLEET_DB_PASSWORD=$(openssl rand -hex 24)/" .env
 docker compose up -d
 docker compose exec server node bin/admin.js password '<your password>'
 docker compose exec server node bin/admin.js default-user <user>   # Linux user services run as unless they name one
 ```
 
-Then open `https://<server>/` and sign in. Data lives in the `db` volume, the certificate in `certs`. Ports and the
-certificate's names can be set in `.env`. To add your own nginx locations to the proxy (for example a public file
-folder), put them in a `compose.override.yaml` (git-ignored) that mounts `*.conf` files into `/etc/nginx/fleet.d/`. Only the server runs in Docker: the agents run directly on each machine
-(see [Adding a machine](#adding-a-machine)).
+Then open `https://<server>/` and sign in. The database (`fleet.db`) lives in the `data` volume, the certificate in
+`certs`. Ports and the certificate's names can be set in an optional `.env` (see `.env.example`). To add your own nginx
+locations to the proxy (for example a public file folder), put them in a `compose.override.yaml` (git-ignored) that
+mounts `*.conf` files into `/etc/nginx/fleet.d/`. Only the server runs in Docker: the agents run directly on each
+machine (see [Adding a machine](#adding-a-machine)).
 
 ## Server setup without Docker
 
@@ -52,18 +51,15 @@ sudo install -d -o fleet -g fleet /opt/fleet-control
 sudo -u fleet git clone https://github.com/haystack-meme/fleet-control.git /opt/fleet-control
 cd /opt/fleet-control && sudo -u fleet npm ci --omit=dev
 
-# 2. database + login (edit the user name in the file if it isn't `fleet`)
-sudo mariadb < sql/setup.sql
-
-# 3. the service (tables are created on first start)
+# 2. the service (the database, data/fleet.db, is created on first start)
 sudo cp deploy/fleet-server.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now fleet-server
 
-# 4. web password, and the Linux user services run as unless they name one
+# 3. web password, and the Linux user services run as unless they name one
 sudo -u fleet node bin/admin.js password '<your password>'
 sudo -u fleet node bin/admin.js default-user <user>
 
-# 5. HTTPS in front of it: see deploy/nginx.conf.example
+# 4. HTTPS in front of it: see deploy/nginx.conf.example
 ```
 
 Then open `https://<server>/` and sign in.
@@ -88,8 +84,9 @@ Run the same command again to update the agent; it keeps its key while the serve
 - The agent runs as root and only manages units named `fleet-<name>.service`. Starting a service runs
   `systemd-run --unit=fleet-<name>.service -p User=… -- /bin/bash -c <command>` on its machine.
 - Services are transient: after a machine reboots they are stopped until started again from the page.
-- The server stores only a hash of each machine key and of each session cookie. All data lives in MariaDB; there are
-  no data files.
+- The server stores only a hash of each machine key and of each session cookie. All data lives in one SQLite file
+  (`data/fleet.db`, or `FLEET_DB_FILE`); back it up by copying it while the server is stopped, or with
+  `sqlite3 fleet.db ".backup copy.db"` while it runs.
 - `node bin/admin.js machines | remove-machine <name> | password <pw> | default-user <user>` for the command line.
 
 ### API
