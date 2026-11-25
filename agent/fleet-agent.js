@@ -203,7 +203,7 @@ async function activate(key) {
   const ws = await wsConnect();
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { ws.close(); reject(new Error('no answer from the server')); }, 15000);
-    ws.on('message', (m) => { try { if (JSON.parse(m).type === 'welcome') { clearTimeout(timer); ws.close(); resolve(); } } catch {} });
+    ws.on('message', (m) => { try { if (JSON.parse(m).type === 'welcome') { clearTimeout(timer); resolve(); ws.close(); } } catch {} }); // resolve first: close() fires 'close'
     ws.on('close', (code, reason) => { clearTimeout(timer); reject(new Error(`refused: ${reason || code}`)); });
     ws.send(JSON.stringify({ type: 'hello', machine: os.hostname(), key, stats: stats() }));
   });
