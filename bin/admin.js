@@ -28,8 +28,7 @@ try {
     catch (e) { throw db.isForeignKey(e) ? new Error(`${args[0]} still has services: delete or move them first`) : e; }
     console.log(r.changes ? `${args[0]} removed (its agent can no longer connect)` : 'no such machine');
   } else if (cmd === 'backup' && args[0]) {
-    if (require('node:fs').existsSync(args[0])) throw new Error(`${args[0]} already exists`);
-    db.run('VACUUM INTO ?', args[0]);
+    require('../lib/backup').backupTo(args[0]);
     console.log(`database copied to ${args[0]}`);
   } else usage();
 } catch (e) { console.error(e.message); process.exit(1); }

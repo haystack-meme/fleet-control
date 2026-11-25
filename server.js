@@ -5,6 +5,8 @@ const agent = require('./lib/agent');
 const db = require('./lib/db');
 const webAuth = require('./lib/web-auth');
 const services = require('./lib/services');
+const backup = require('./lib/backup');
+const fs = require('node:fs');
 
 const pub = path.join(__dirname, 'public');
 const app = express();
@@ -88,6 +90,21 @@ for (const action of ['start', 'stop', 'restart'])
 app.get('/api/services/:name/versions', async (req, res) => res.json(await services.versions(req.params.name)));
 app.post('/api/services/:name/rollback', async (req, res) => res.json(await services.rollback(req.params.name, Number((req.body || {}).version))));
 app.get('/api/services/:name/logs', async (req, res) => res.type('text/plain').send(await services.logs(req.params.name, req.query.lines)));
+
+// Backup: the whole database as a file. Restore: replace machines, settings and services from such a file (sessions
+// are kept). Agents are then disconnected so each one is identified again against the restored machines.
+app.get('/api/backup', (req, res, next) => {
+  const f = backup.backupTemp();
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+  res.download(f, `fleet-${stamp}.db`, (err) => { fs.rmSync(f, { force: true }); if (err && !res.headersSent) next(err); });
+});
+app.post('/api/restore', express.raw({ type: '*/*', limit: '200mb' }), (req, res) => {
+  if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'no file' });
+  const counts = backup.restore(req.body);
+  agent.kickAll();
+  console.log(`[backup] restored from an upload by ${req.ip}: ${counts.machines} machines, ${counts.services} services`);
+  res.json({ ok: true, ...counts });
+});
 
 app.use((req, res) => res.status(404).json({ error: 'not found' }));
 app.use((err, req, res, next) => {

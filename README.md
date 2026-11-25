@@ -17,6 +17,8 @@ Run and manage long-running commands on a fleet of Linux machines from one web p
   logs (`journalctl`), edit, copy and delete from the page.
 - **Version history:** every save is a new version with a full copy of the definition; any version can be rolled
   back to (which saves it as a new version).
+- **Backup and restore:** download the whole database from the page and restore it from an uploaded file
+  (running services are left as they are).
 - **Enrollment and approval:** a new machine runs one command, gets a one-time code that becomes its permanent key,
   and waits for you to approve it on the page before anything runs on it.
 
@@ -104,6 +106,8 @@ All endpoints except `/health`, `/login`, `/enroll` and `/install/*` need a sign
 | GET, PUT, DELETE | `/api/services/{name}` | read / save (new version) / delete (`?force=1` if its machine is unreachable) |
 | POST | `/api/services/{name}/start`, `/stop`, `/restart` | control |
 | GET | `/api/services/{name}/logs?lines=200` | journal |
+| GET | `/api/backup` | the whole database as a file (`fleet-<UTC time>.db`) |
+| POST | `/api/restore` | body = a backup file: replaces machines, settings (incl. the password), services and their history; sessions are kept |
 | GET | `/api/services/{name}/versions` | history |
 | POST | `/api/services/{name}/rollback` | `{"version": N}` |
 

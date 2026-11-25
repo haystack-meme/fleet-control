@@ -64,7 +64,7 @@ form.f .hlwrap textarea{position:relative;display:block;width:100%;min-height:5.
 </style></head><body>
 <div class="wrap">
 <header><h1>Fleet</h1>
-<div><button id="new" class="pri">New service</button> <button id="ref">Refresh</button> <button id="out">Sign out</button></div></header>
+<div><button id="new" class="pri">New service</button> <button id="ref">Refresh</button> <button id="bak" title="Download the whole database (machines, services, history, settings)">Download backup</button> <button id="rst" title="Replace everything with a downloaded backup">Restore…</button><input id="rstf" type="file" accept=".db" hidden> <button id="out">Sign out</button></div></header>
 
 <div id="svcs"><div class="card empty mut">Loading…</div></div>
 </div>
@@ -397,6 +397,22 @@ $('form').onsubmit = async (ev) => {
 };
 
 $('ref').onclick = refresh;
+$('bak').onclick = () => { location.href = '/api/backup'; };
+$('rst').onclick = () => { $('rstf').value = ''; $('rstf').click(); };
+$('rstf').onchange = async () => {
+  const file = $('rstf').files[0];
+  if (!file || !confirm('Restore from ' + file.name + '?\n\nThis replaces ALL machines, services, their history and settings ' +
+    '(including the password) with the ones in the backup. Running services are not stopped or started: ' +
+    'a service the backup does not have keeps running on its machine, unmanaged.')) return;
+  try {
+    const r = await fetch('/api/restore', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file });
+    if (r.status === 401) { location.href = '/login'; return; }
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || r.statusText);
+    alert('Restored: ' + d.machines + ' machines, ' + d.services + ' services. Agents are reconnecting.');
+  } catch (e) { alert('Restore failed: ' + e.message); }
+  refresh();
+};
 $('out').onclick = async () => { await fetch('/logout', { method: 'POST' }); location.href = '/login'; };
 refresh();
 setInterval(() => { if (!$('dlg').open) loadServices().catch(() => {}); }, 15000);
