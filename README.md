@@ -88,8 +88,9 @@ Run the same command again to update the agent; it keeps its key while the serve
 - Services are transient: after a machine reboots they are stopped until started again from the page.
 - The server stores only a hash of each machine key and of each session cookie. All data lives in one SQLite file
   (`data/fleet.db`, or `FLEET_DB_FILE`); back it up with **Download backup** on the page or
-  `node bin/admin.js backup <file>.db.gz` (the same gzip-compressed file; safe while the server runs). Restore it with
-  **Restore…** on the page; `gunzip` gives the plain database file.
+  `node bin/admin.js backup <file>.fleetbackup` (the same file; safe while the server runs). Restore it with
+  **Restore…** on the page. The file is gzip(database) followed by the SHA-256 of the gzip bytes; the plain
+  database is `head -c -32 <file> | gunzip > fleet.db`.
 - `node bin/admin.js machines | remove-machine <name> | password <pw> | default-user <user> | backup <file>` for the
   command line.
 
@@ -106,8 +107,8 @@ All endpoints except `/health`, `/login`, `/enroll` and `/install/*` need a sign
 | GET, PUT, DELETE | `/api/services/{name}` | read / save (new version) / delete (`?force=1` if its machine is unreachable) |
 | POST | `/api/services/{name}/start`, `/stop`, `/restart` | control |
 | GET | `/api/services/{name}/logs?lines=200` | journal |
-| GET | `/api/backup` | the whole database, gzip-compressed (`fleet-<UTC time>.db.gz`) |
-| POST | `/api/restore` | body = a backup file exactly as downloaded (an edited file fails to decompress and is refused): replaces machines, settings (incl. the password), services and their history; sessions are kept |
+| GET | `/api/backup` | backup file `fleet-<UTC time>.fleetbackup`: gzip of the whole database + the SHA-256 of that gzip (last 32 bytes) |
+| POST | `/api/restore` | body = a backup file exactly as downloaded (refused if the SHA-256 doesn't match): replaces machines, settings (incl. the password), services and their history; sessions are kept |
 | GET | `/api/services/{name}/versions` | history |
 | POST | `/api/services/{name}/rollback` | `{"version": N}` |
 

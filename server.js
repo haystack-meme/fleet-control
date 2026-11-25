@@ -94,7 +94,7 @@ app.get('/api/services/:name/logs', async (req, res) => res.type('text/plain').s
 // are kept). Agents are then disconnected so each one is identified again against the restored machines.
 app.get('/api/backup', (req, res) => {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
-  res.attachment(`fleet-${stamp}.db.gz`).type('application/gzip').send(backup.backupGz());
+  res.attachment(`fleet-${stamp}.fleetbackup`).type('application/octet-stream').send(backup.backupFile());
 });
 app.post('/api/restore', express.raw({ type: '*/*', limit: '200mb' }), (req, res) => {
   if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'no file' });

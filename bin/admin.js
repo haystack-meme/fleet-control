@@ -4,7 +4,7 @@
 //   node bin/admin.js default-user <user>        Linux user for services that don't name one
 //   node bin/admin.js machines                   list machines (enrolled with fleet-agent.js --install)
 //   node bin/admin.js remove-machine <name>      forget a machine and its key (not while it has services)
-//   node bin/admin.js backup <file>              compressed copy of the database, as the page's download (safe while running)
+//   node bin/admin.js backup <file>              backup file (.fleetbackup), as the page's download (safe while running)
 const db = require('../lib/db');
 const { hash } = require('../lib/web-auth');
 
