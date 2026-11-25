@@ -1,5 +1,6 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Fleet</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232f6fdb'/%3E%3Cpath d='M10 21L16 11L22 21Z' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linejoin='round' opacity='.7'/%3E%3Ccircle cx='16' cy='11' r='3' fill='%23fff'/%3E%3Ccircle cx='10' cy='21' r='3' fill='%23fff'/%3E%3Ccircle cx='22' cy='21' r='3' fill='%23fff'/%3E%3C/svg%3E">
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#1b1f24;--mut:#667085;--line:#e3e6ea;--acc:#2f6fdb;--ok:#1f9d55;--warn:#c98a00;--bad:#d64545;--code:#f0f2f5;
   --h-cmd:#0b57d0;--h-flag:#8a3ffc;--h-str:#1a7f37;--h-var:#b35900;--h-op:#cf222e;--h-kw:#cf222e;--h-com:#6e7781;--h-num:#0a7e8c;--h-path:#24292f}
@@ -10,7 +11,15 @@
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
 .wrap{max-width:880px;margin:0 auto;padding:28px 16px 64px}
 header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:28px;flex-wrap:wrap}
-h1{margin:0;font-size:20px}
+h1{margin:0;font-size:21px;line-height:1.15;letter-spacing:-.01em}
+header{align-items:flex-start}
+.brand{display:flex;align-items:flex-start;gap:12px;min-width:0;flex:1 1 300px}.brand>div{min-width:0}
+.tools{flex:none;margin-left:auto}
+.logo{flex:none;width:36px;height:36px}.logo rect{fill:var(--acc)}
+/* The live summary under the name: machines online, services running / failed, machines waiting for approval. */
+.sum{display:flex;flex-wrap:wrap;gap:2px 14px;margin-top:3px;font-size:13px;color:var(--mut)}
+.sum span{white-space:nowrap}.sum .dot{width:7px;height:7px;margin-right:5px;vertical-align:1px}
+.sum .bad{color:var(--bad)}.sum .warn{color:var(--warn)}
 .tools{display:flex;align-items:center;gap:8px}
 .tools>button,.tools>a.btn{height:38px;display:inline-flex;align-items:center;justify-content:center}
 .icon{width:38px;padding:0;font-size:19px;line-height:1}
@@ -72,7 +81,9 @@ form.f .hlwrap textarea{position:relative;display:block;width:100%;min-height:5.
 .hlwrap textarea::selection{background:color-mix(in srgb,var(--acc) 30%,transparent);color:transparent}
 </style></head><body>
 <div class="wrap">
-<header><h1>Fleet</h1>
+<header><div class="brand">
+<svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8"/><path d="M10 21L16 11L22 21Z" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round" opacity=".7"/><circle cx="16" cy="11" r="3" fill="#fff"/><circle cx="10" cy="21" r="3" fill="#fff"/><circle cx="22" cy="21" r="3" fill="#fff"/></svg>
+<div><h1>Fleet</h1><div class="sum" id="sum" aria-live="polite"></div></div></div>
 <div class="tools">
 <a class="btn" href="/files/" target="_blank" rel="noopener" id="filesb" hidden>Public files</a>
 <button id="ref" class="icon" title="Refresh" aria-label="Refresh">↻</button>
@@ -197,6 +208,26 @@ async function loadMachines() {
   if (newMachinesKey() === renderedNewKey && heads.length === ok.length && ok.every((h, i) => heads[i].dataset.hhead === h.name))
     ok.forEach((h, i) => { heads[i].innerHTML = headHtml(h.name); });
   else render();
+  summary();
+}
+// The line under the title: how the fleet is doing, at a glance.
+function summary() {
+  const parts = [], dot = (cls) => '<span class="dot ' + cls + '"></span>';
+  if (machines) {
+    const ok = approved(), on = ok.filter((m) => m.online).length, waiting = machines.filter((m) => m.status === 'pending').length;
+    parts.push(!ok.length ? '<span>No machines yet</span>'
+      : on === ok.length ? '<span>' + dot('up') + (ok.length === 1 ? '1 machine online' : ok.length + ' machines online') + '</span>'
+      : '<span class="bad">' + dot('down') + (ok.length - on) + ' of ' + ok.length + ' machines offline</span>');
+    if (waiting) parts.push('<span class="warn">' + dot('activating') + waiting + ' new machine' + (waiting === 1 ? '' : 's') + ' waiting for approval</span>');
+  }
+  const st = (s) => s.status || {};
+  const running = services.filter((s) => st(s).running && !st(s).error).length, failed = services.filter((s) => st(s).active === 'failed').length;
+  const starting = services.filter((s) => notReady(s)).length;
+  if (services.length) parts.push('<span>' + dot(running ? 'up' : '') + running + ' of ' + services.length + ' service' + (services.length === 1 ? '' : 's') + ' running' +
+    (starting ? ' (' + starting + ' not ready yet)' : '') + '</span>');
+  else if (machines) parts.push('<span>No services yet</span>');
+  if (failed) parts.push('<span class="bad">' + dot('down') + failed + ' failed</span>');
+  $('sum').innerHTML = parts.join('');
 }
 function newMachinesHtml() {
   const list = (machines || []).filter((m) => m.status !== 'approved');
@@ -308,6 +339,7 @@ function render() {
   }).join('');
   for (const n of openLogs) loadLogs(n);
   for (const n of openHist) loadHist(n);
+  summary();
 }
 
 // While any service is starting / stopping / restarting / warming up, check again every 1.5 s until it settles.

@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Fleet</title><meta name="viewport" content="width=device-width,initial-scale=1">
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Fleet</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232f6fdb'/%3E%3Cpath d='M10 21L16 11L22 21Z' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linejoin='round' opacity='.7'/%3E%3Ccircle cx='16' cy='11' r='3' fill='%23fff'/%3E%3Ccircle cx='10' cy='21' r='3' fill='%23fff'/%3E%3Ccircle cx='22' cy='21' r='3' fill='%23fff'/%3E%3C/svg%3E"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#1b1f24;--line:#e3e6ea;--acc:#2f6fdb;--bad:#d64545}
 @media (prefers-color-scheme:dark){:root{--bg:#121417;--card:#1b1e23;--fg:#e8eaed;--line:#2b3038;--acc:#6b9cff;--bad:#ff6b6b}}
@@ -8,9 +8,11 @@
 button,input{font:inherit;border-radius:8px;border:1px solid var(--line);padding:9px 12px;background:var(--card);color:var(--fg)}
 button{background:var(--acc);border-color:var(--acc);color:#fff;cursor:pointer}
 .err{color:var(--bad)}
+.brand{display:flex;align-items:center;gap:10px;margin:0 0 14px}.brand h1{margin:0;font-size:21px}
+.logo{width:32px;height:32px}.logo rect{fill:var(--acc)}
 </style></head><body>
 <div class="wrap"><div class="card">
-<h1 style="margin:0 0 12px;font-size:20px">Fleet</h1>
+<div class="brand"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8"/><path d="M10 21L16 11L22 21Z" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round" opacity=".7"/><circle cx="16" cy="11" r="3" fill="#fff"/><circle cx="10" cy="21" r="3" fill="#fff"/><circle cx="22" cy="21" r="3" fill="#fff"/></svg><h1>Fleet</h1></div>
 <p id="setup" hidden style="margin:0 0 12px">No password is set. Choose one: it will be the password for this page.</p>
 <form id="f"><input id="pw" type="password" placeholder="Password" autocomplete="current-password" autofocus required style="width:100%">
 <input id="pw2" type="password" placeholder="Repeat password" autocomplete="new-password" hidden style="width:100%;margin-top:10px">
